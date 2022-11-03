@@ -1,11 +1,8 @@
 import datetime
-import os
 from typing import Sequence, Callable
 import numpy as np
-from functools import partial
 import random
 
-from fedot.core.optimisers.opt_history_objects.opt_history import OptHistory, log_to_history
 from fedot.core.repository.tasks import Task
 from fedot.core.composer.gp_composer.gp_composer import GPComposer
 from fedot.core.optimisers.populational_optimizer import PopulationalOptimizer
@@ -25,7 +22,6 @@ from fedot.core.repository.tasks import TaskTypesEnum
 from fedot.core.optimisers.gp_comp.gp_operators import random_graph
 from fedot.core.optimisers.optimizer import GraphGenerationParams
 from cases.credit_scoring.credit_scoring_problem import get_scoring_data
-from fedot.core.utils import fedot_project_root
 from fedot.core.visualisation.opt_viz_extra import OptHistoryExtraVisualizer
 
 random.seed(12)
@@ -44,43 +40,53 @@ class ParticleSwarmOptimizer(PopulationalOptimizer):
         self.crossover = Crossover(graph_optimizer_params, requirements, graph_generation_params)
         self.mutation = Mutation(graph_optimizer_params, requirements, graph_generation_params)
         self.initial_individuals = [Individual(graph) for graph in initial_graphs]
+        self.w = 0.9  # inertia weight
+        self.c1 = 0.84  # acceleration coefficient 1
+        self.c2 = 0.38  # acceleration coefficient 2
+        self.r1 = np.random.random_sample()  # random number on interval [0, 1)
+        self.r2 = np.random.random_sample()  # random number on interval [0, 1)
+        self.r3 = np.random.random_sample()  # random number on interval [0, 1)
 
     def _initial_population(self, evaluator: Callable):
         evaluation_result = evaluator(self.initial_individuals)
         self._update_population(evaluation_result)
 
     def _evolve_population(self, evaluator: Callable) -> PopulationT:
+
+        """In this method the particle velocities and positions are updated by three operations.
+        The first operation 'velocity', which represents the velocity operation for a particle using mutation process
+        which is applied with a probability of w and generates a temporary particle. The second operation 'position'
+        which is the cognitive part of particle represents the crossover operation, which is applied with a probability
+        of c1. The third operation 'new_position', which is the social part of particle represents the crossover
+        operator, which is applied with a probability of c2."""
+        
         population = self.initial_individuals
         particle_best = population
         global_best = max(population, key=lambda Individual: Individual.fitness)
-        w = 0.9
-        c1 = 0.5
-        c2 = 0.5
-        r1 = np.random.random_sample()
-        r2 = np.random.random_sample()
-        r3 = np.random.random_sample()
         for j, current_particle in enumerate(population):
-            if r1 < w:
+            if self.r1 < self.w:
                 velocity = self.mutation(population[j])
             else:
                 velocity = population[j]
-            if r2 < c1:
+            if self.r2 < self.c1:
                 position = max(evaluator(self.crossover([velocity, particle_best[j]])),
                                key=lambda Individual: Individual.fitness)
             else:
                 position = velocity
-            if r3 < c2:
-                new_position = max(evaluator(self.crossover([global_best, position])),
+            if self.r3 < self.c2:
+                new_position = max(evaluator(self.crossover([position, global_best])),
                                    key=lambda Individual: Individual.fitness)
             else:
                 new_position = position
 
             if new_position.fitness > particle_best[j].fitness:
                 particle_best[j] = new_position
-                population[j] = particle_best[j]
+
             if new_position.fitness > global_best.fitness:
                 global_best = new_position
-                population[j] = global_best
+            self.w = self.w - 0.02
+            self.c1 = self.c1 - 0.02
+            self.c2 = self.c2 + 0.02
 
         return population
 
@@ -126,11 +132,8 @@ def run_pso(train_file_path, test_file_path,
         graph_optimizer_params=optimiser_parameters,
         requirements=requirements, initial_graphs=initial)
 
-    history = OptHistory(objective)
-    history_callback = partial(log_to_history, history=history)
-    optimiser.set_optimisation_callback(history_callback)
 
-    composer = GPComposer(optimizer=optimiser, composer_requirements=requirements, history=history)
+    composer = GPComposer(optimizer=optimiser, composer_requirements=requirements)
     pipelines_pso_composed = composer.compose_pipeline(data=dataset_to_compose)
 
     if is_visualise:
@@ -140,4 +143,3 @@ def run_pso(train_file_path, test_file_path,
 if __name__ == '__main__':
     full_path_train, full_path_test = get_scoring_data()
     run_pso(full_path_train, full_path_test)
-
