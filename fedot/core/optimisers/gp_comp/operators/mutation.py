@@ -7,12 +7,15 @@ import numpy as np
 
 from fedot.core.adapter import register_native
 from fedot.core.composer.advisor import RemoveType
+from fedot.core.dag.graph import Graph
 from fedot.core.dag.graph_node import GraphNode
+from fedot.core.dag.graph_utils import distance_to_root_level, ordered_subnodes_hierarchy, distance_to_primary_level
 from fedot.core.optimisers.gp_comp.gp_operators import random_graph
-from fedot.core.optimisers.gp_comp.individual import Individual, ParentOperator
 from fedot.core.optimisers.gp_comp.operators.operator import PopulationT, Operator
 from fedot.core.optimisers.gp_comp.pipeline_composer_requirements import PipelineComposerRequirements
 from fedot.core.optimisers.graph import OptGraph, OptNode
+from fedot.core.optimisers.opt_history_objects.individual import Individual
+from fedot.core.optimisers.opt_history_objects.parent_operator import ParentOperator
 from fedot.core.optimisers.optimizer import GraphGenerationParams
 from fedot.core.utilities.data_structures import ComparableEnum as Enum
 
@@ -64,7 +67,7 @@ class Mutation(Operator):
         """
         if mut_id in list(MutationStrengthEnum):
             mutation_strength = mut_id.value
-            mutation_prob = mutation_strength / (node.distance_to_primary_level + 1)
+            mutation_prob = mutation_strength / (distance_to_primary_level(node) + 1)
         else:
             mutation_prob = default_mutation_prob
         return mutation_prob
@@ -166,7 +169,7 @@ class Mutation(Operator):
             source_node, target_node = sample(graph.nodes, 2)
 
             nodes_not_cycling = (target_node.descriptive_id not in
-                                 [n.descriptive_id for n in source_node.ordered_subnodes_hierarchy()])
+                                 [n.descriptive_id for n in ordered_subnodes_hierarchy(source_node)])
             if nodes_not_cycling and (source_node not in target_node.nodes_from):
                 graph.connect_nodes(source_node, target_node)
                 break
@@ -181,9 +184,13 @@ class Mutation(Operator):
         new_node = self.graph_generation_params.node_factory.get_parent_node(node_to_mutate, is_primary=False)
         if not new_node:
             return graph
+
+        # rewire old children to new parent
         new_node.nodes_from = node_to_mutate.nodes_from
         node_to_mutate.nodes_from = [new_node]
-        graph.nodes.append(new_node)
+
+        # add new node to graph
+        graph.add_node(new_node)
         return graph
 
     @register_native
@@ -204,15 +211,17 @@ class Mutation(Operator):
     @register_native
     def _add_as_child(self, graph: OptGraph, node_to_mutate: OptNode) -> OptGraph:
         # add as child
+        old_node_children = graph.node_children(node_to_mutate)
+        new_node_child = choice(old_node_children) if old_node_children else None
         new_node = self.graph_generation_params.node_factory.get_node(is_primary=False)
         if not new_node:
             return graph
-        parents_node_to_mutate = node_to_mutate.nodes_from or []
-        graph.update_node(old_node=node_to_mutate, new_node=new_node)
-        graph.add_node(node_to_mutate)
+        graph.add_node(new_node)
         graph.connect_nodes(node_parent=node_to_mutate, node_child=new_node)
-        for node_parent in parents_node_to_mutate:
-            graph.disconnect_nodes(node_parent=node_parent, node_child=new_node)
+        if new_node_child:
+            graph.connect_nodes(node_parent=new_node, node_child=new_node_child)
+            graph.disconnect_nodes(node_parent=node_to_mutate, node_child=new_node_child)
+
         return graph
 
     @register_native
@@ -295,13 +304,13 @@ class Mutation(Operator):
         """
         node_from_graph = choice(graph.nodes)
         if local_growth:
-            max_depth = node_from_graph.distance_to_primary_level
+            max_depth = distance_to_primary_level(node_from_graph)
             is_primary_node_selected = (not node_from_graph.nodes_from) or (node_from_graph != graph.root_node and
                                                                             randint(0, 1))
         else:
-            max_depth = self.requirements.max_depth - graph.distance_to_root_level(node_from_graph)
+            max_depth = self.requirements.max_depth - distance_to_root_level(graph, node_from_graph)
             is_primary_node_selected = \
-                graph.distance_to_root_level(node_from_graph) >= self.requirements.max_depth and randint(0, 1)
+                distance_to_root_level(graph, node_from_graph) >= self.requirements.max_depth and randint(0, 1)
         if is_primary_node_selected:
             new_subtree = self.graph_generation_params.node_factory.get_node(is_primary=True)
             if not new_subtree:

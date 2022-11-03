@@ -1,52 +1,62 @@
+from __future__ import annotations
+
 import csv
 import io
 import itertools
-import json
 import os
 import shutil
 from pathlib import Path
-from typing import List, Optional, Sequence, Union
+from typing import List, Optional, Sequence, Union, TYPE_CHECKING
 
 from fedot.core.log import default_log
-from fedot.core.optimisers.adapters import PipelineAdapter
-from fedot.core.optimisers.archive import GenerationKeeper
-# ParentOperator is needed for backward compatibility with older optimization histories.
-# This is a temporary solution until the issue #699 (https://github.com/nccr-itmo/FEDOT/issues/699) is closed.
-from fedot.core.optimisers.gp_comp.individual import Individual, ParentOperator  # noqa
-from fedot.core.optimisers.gp_comp.operators.operator import PopulationT
 from fedot.core.optimisers.objective import Objective
-from fedot.core.optimisers.utils.population_utils import get_metric_position
-from fedot.core.pipelines.template import PipelineTemplate
-from fedot.core.repository.quality_metrics_repository import QualityMetricsEnum
-from fedot.core.serializers import Serializer
+from fedot.core.serializers.serializer import default_load, default_save
 from fedot.core.utils import default_fedot_data_dir
 from fedot.core.visualisation.opt_viz import OptHistoryVisualizer
+
+if TYPE_CHECKING:
+    from fedot.core.optimisers.opt_history_objects.individual import Individual
 
 
 class OptHistory:
     """
-    Contains optimization history, convert Pipeline to PipelineTemplate, save history to csv.
+    Contains optimization history, save history to csv.
+    Can be used for any type of graph that is serializable with Serializer.
 
-    :param objective: contains information about metrics used during optimization.
+    Args:
+        is_multi_objective: specifies if history is built for multi-objective optimization.
+        default_save_dir: default directory used for saving history when not explicit path is provided.
     """
 
-    def __init__(self, objective: Objective = None):
-        self._objective = objective or Objective([])
+    def __init__(self,
+                 is_multi_objective: bool = False,
+                 default_save_dir: Optional[os.PathLike] = None):
+        self._is_multi_objective = is_multi_objective
         self.individuals: List[List[Individual]] = []
         self.archive_history: List[List[Individual]] = []
         self._log = default_log(self)
 
+        # init default save directory
+        if default_save_dir:
+            default_save_dir = Path(default_save_dir)
+            if not default_save_dir.is_absolute():
+                # if path is not absolute, treat it as relative to data dir
+                default_save_dir = Path(default_fedot_data_dir()) / default_save_dir
+        else:
+            default_save_dir = default_fedot_data_dir()
+        self._default_save_dir = str(default_save_dir)
+
     def is_empty(self) -> bool:
         return not self.individuals
 
-    def add_to_history(self, individuals: List[Individual]):
-        self.individuals.append(individuals)
+    def add_to_history(self, individuals: Sequence[Individual]):
+        self.individuals.append(list(individuals))
 
-    def add_to_archive_history(self, individuals: List[Individual]):
-        self.archive_history.append(individuals)
+    def add_to_archive_history(self, individuals: Sequence[Individual]):
+        self.archive_history.append(list(individuals))
 
     def to_csv(self, save_dir: Optional[os.PathLike] = None, file: os.PathLike = 'history.csv'):
-        save_dir = save_dir or default_fedot_data_dir()
+        save_dir = save_dir or self._default_save_dir
         if not os.path.isdir(save_dir):
             os.mkdir(save_dir)
 
@@ -55,7 +65,7 @@ class OptHistory:
 
             # Write header
             metric_str = 'metric'
-            if self._objective.is_multi_objective:
+            if self._is_multi_objective:
                 metric_str += 's'
             header_row = ['index', 'generation', metric_str, 'quantity_of_operations', 'depth', 'metadata']
             writer.writerow(header_row)
@@ -68,8 +78,9 @@ class OptHistory:
                     writer.writerow(row)
                     idx += 1
 
-    def save_current_results(self, save_dir: os.PathLike):
+    def save_current_results(self, save_dir: Optional[os.PathLike] = None):
         # Create folder if it's not exists
+        save_dir = save_dir or self._default_save_dir
         if not os.path.isdir(save_dir):
             os.makedirs(save_dir)
             self._log.info(f"Created directory for saving optimization history: {save_dir}")
@@ -78,39 +89,20 @@ class OptHistory:
             last_gen_id = len(self.individuals) - 1
             last_gen = self.individuals[last_gen_id]
             last_gen_history = self.historical_fitness[last_gen_id]
-            adapter = PipelineAdapter()
             for individual, ind_fitness in zip(last_gen, last_gen_history):
                 ind_path = Path(save_dir, str(last_gen_id), str(individual.uid))
-                additional_info = \
-                    {'fitness_name': self._objective.metric_names,
-                     'fitness_value': ind_fitness}
-                PipelineTemplate(adapter.restore(individual)).\
-                    export_pipeline(path=ind_path, additional_info=additional_info, datetime_in_path=False)
+                if not os.path.isdir(ind_path):
+                    os.makedirs(ind_path)
+                individual.save(json_file_path=Path(ind_path, f'{str(individual.uid)}.json'))
         except Exception as ex:
             self._log.exception(ex)
 
     def save(self, json_file_path: Union[str, os.PathLike] = None) -> Optional[str]:
-        if json_file_path is None:
-            return json.dumps(self, indent=4, cls=Serializer)
-        with open(json_file_path, mode='w') as json_file:
-            json.dump(self, json_file, indent=4, cls=Serializer)
+        return default_save(obj=self, json_file_path=json_file_path)
 
     @staticmethod
-    def load(json_str_or_file_path: Union[str, os.PathLike] = None) -> 'OptHistory':
-        def load_as_file_path():
-            with open(json_str_or_file_path, mode='r') as json_file:
-                return json.load(json_file, cls=Serializer)
-
-        def load_as_json_str():
-            return json.loads(json_str_or_file_path, cls=Serializer)
-
-        if isinstance(json_str_or_file_path, os.PathLike):
-            return load_as_file_path()
-
-        try:
-            return load_as_json_str()
-        except json.JSONDecodeError:
-            return load_as_file_path()
+    def load(json_str_or_file_path: Union[str, os.PathLike] = None) -> OptHistory:
+        return default_load(json_str_or_file_path)
 
     @staticmethod
     def clean_results(dir_path: Optional[str] = None):
@@ -122,9 +114,9 @@ class OptHistory:
     @property
     def historical_fitness(self) -> Sequence[Sequence[Union[float, Sequence[float]]]]:
         """Return sequence of histories of generations per each metric"""
-        if self._objective.is_multi_objective:
+        if self._is_multi_objective:
             historical_fitness = []
-            num_metrics = len(self._objective.metrics)
+            num_metrics = len(self.individuals[0][0].fitness.values)
             for objective_num in range(num_metrics):
                 # history of specific objective for each generation
                 objective_history = [[ind.fitness.values[objective_num] for ind in generation]
@@ -135,9 +127,9 @@ class OptHistory:
         return historical_fitness
 
     @property
-    def all_historical_fitness(self):
+    def all_historical_fitness(self) -> List[float]:
         historical_fitness = self.historical_fitness
-        if self._objective.is_multi_objective:
+        if self._is_multi_objective:
             all_historical_fitness = []
             for obj_num in range(len(historical_fitness)):
                 all_historical_fitness.append(list(itertools.chain(*historical_fitness[obj_num])))
@@ -145,22 +137,22 @@ class OptHistory:
             all_historical_fitness = list(itertools.chain(*historical_fitness))
         return all_historical_fitness
 
-    @property
-    def all_historical_quality(self):
-        if self._objective.is_multi_objective:
-            metric_position = get_metric_position(self._objective.metrics, QualityMetricsEnum)
+    def all_historical_quality(self, metric_position: int = 0) -> List[float]:
+        """
+        Return fitness history of population for specified metric.
+
+        Args:
+            metric_position: Index of the metric for multi-objective optimization.
+             By default, choose first metric, assuming it is primary quality metric.
+
+        Returns:
+            List: all historical fitness
+        """
+        if self._is_multi_objective:
             all_historical_quality = self.all_historical_fitness[metric_position]
         else:
             all_historical_quality = self.all_historical_fitness
         return all_historical_quality
-
-    @property
-    def historical_pipelines(self):
-        adapter = PipelineAdapter()
-        return [
-            PipelineTemplate(adapter.restore(ind))
-            for ind in list(itertools.chain(*self.individuals))
-        ]
 
     @property
     def show(self):
@@ -201,20 +193,3 @@ class OptHistory:
                                   f'{positional_id}',
                                   f'{individual.graph.descriptive_id}']), file=output)
         return output.getvalue()
-
-
-def log_to_history(population: PopulationT,
-                   generations: GenerationKeeper,
-                   history: OptHistory,
-                   save_dir: Optional[os.PathLike] = None):
-    """
-    Default variant of callback that preserves optimisation history
-    :param history: OptHistory for logging
-    :param population: list of individuals obtained in last iteration
-    :param generations: keeper of the best individuals from all iterations
-    :param save_dir: directory for saving history to. None if saving to a file is not required.
-    """
-    history.add_to_history(population)
-    history.add_to_archive_history(generations.best_individuals)
-    if save_dir:
-        history.save_current_results(save_dir)

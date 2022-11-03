@@ -11,14 +11,9 @@ from fedot.core.repository.tasks import Task, TaskTypesEnum
 ERROR_PREFIX = 'Invalid pipeline configuration:'
 
 
-def has_correct_operation_positions(pipeline: Pipeline, task: Optional[Task] = None):
-    is_root_satisfy_task_type = True
-    if task:
-        is_root_satisfy_task_type = task.task_type in pipeline.root_node.operation.acceptable_task_types
-
-    if not is_root_satisfy_task_type:
+def has_correct_operations_for_task(pipeline: Pipeline, task_type: Optional[TaskTypesEnum] = None):
+    if task_type and not task_type in pipeline.root_node.operation.acceptable_task_types:
         raise ValueError(f'{ERROR_PREFIX} Pipeline has incorrect operations positions')
-
     return True
 
 
@@ -145,7 +140,13 @@ def has_no_data_flow_conflicts_in_ts_pipeline(pipeline: Pipeline):
                          'gaussian_filter': ['lagged', 'sparse_lagged'],
                          'diff_filter': ['lagged', 'sparse_lagged'],
                          'smoothing': ['lagged', 'sparse_lagged'],
-                         'cut': ['lagged', 'sparse_lagged']}
+                         'cut': ['lagged', 'sparse_lagged'],
+                         'ts_naive_average': ['lagged', 'sparse_lagged'],
+                         'locf': ['lagged', 'sparse_lagged'],
+                         'ets':  ['lagged', 'sparse_lagged'],
+                         'polyfit': ['lagged', 'sparse_lagged'],
+                         'clstm': ['lagged', 'sparse_lagged']
+                         }
 
     for node in pipeline.nodes:
         # Operation name in the current node

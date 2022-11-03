@@ -2,7 +2,7 @@ from abc import abstractmethod
 from dataclasses import dataclass
 from typing import Any, Callable, Optional, Sequence
 
-from fedot.core.adapter import BaseOptimizationAdapter, DirectAdapter
+from fedot.core.adapter import BaseOptimizationAdapter, IdentityAdapter
 from fedot.core.composer.advisor import DefaultChangeAdvisor
 from fedot.core.dag.graph import Graph
 from fedot.core.dag.graph_verifier import GraphVerifier, VerifierRuleType
@@ -12,7 +12,9 @@ from fedot.core.optimisers.composer_requirements import ComposerRequirements
 from fedot.core.optimisers.gp_comp.operators.operator import PopulationT
 from fedot.core.optimisers.graph import OptGraph
 from fedot.core.optimisers.objective import GraphFunction, Objective, ObjectiveFunction
+from fedot.core.optimisers.opt_history_objects.opt_history import OptHistory
 from fedot.core.optimisers.opt_node_factory import DefaultOptNodeFactory, OptNodeFactory
+from fedot.core.optimisers.gp_comp.evaluation import DelegateEvaluator
 
 OptimisationCallback = Callable[[PopulationT, GenerationKeeper], Any]
 
@@ -55,15 +57,19 @@ class GraphGenerationParams:
     verifier: GraphVerifier
     advisor: DefaultChangeAdvisor
     node_factory: OptNodeFactory
+    remote_evaluator: Optional[DelegateEvaluator] = None
 
     def __init__(self, adapter: Optional[BaseOptimizationAdapter] = None,
                  rules_for_constraint: Sequence[VerifierRuleType] = (),
                  advisor: Optional[DefaultChangeAdvisor] = None,
-                 node_factory: Optional[OptNodeFactory] = None):
-        self.adapter = adapter or DirectAdapter()
+                 node_factory: Optional[OptNodeFactory] = None,
+                 remote_evaluator: Optional[DelegateEvaluator] = None,
+                 ):
+        self.adapter = adapter or IdentityAdapter()
         self.verifier = GraphVerifier(rules_for_constraint, self.adapter)
         self.advisor = advisor or DefaultChangeAdvisor()
         self.node_factory = node_factory or DefaultOptNodeFactory()
+        self.remote_evaluator = remote_evaluator
 
 
 class GraphOptimizer:
@@ -93,6 +99,9 @@ class GraphOptimizer:
         self.graph_generation_params = graph_generation_params or GraphGenerationParams()
         self.graph_optimizer_params = graph_optimizer_parameters or GraphOptimizerParameters()
         self._optimisation_callback: OptimisationCallback = do_nothing_callback
+        mo = False if not graph_optimizer_parameters else graph_optimizer_parameters.multi_objective
+        self.history = OptHistory(mo, requirements.history_dir) \
+            if requirements and requirements.keep_history else None
 
     @property
     def objective(self) -> Objective:

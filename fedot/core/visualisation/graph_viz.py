@@ -15,6 +15,7 @@ from matplotlib.patches import ArrowStyle
 from pyvis.network import Network
 from seaborn import color_palette
 
+from fedot.core.dag.graph_utils import distance_to_primary_level
 from fedot.core.log import default_log
 from fedot.core.pipelines.convert import graph_structure_as_nx_graph
 from fedot.core.utils import default_fedot_data_dir
@@ -39,7 +40,7 @@ class GraphVisualiser:
 
     def visualise(self, graph: GraphType, save_path: Optional[Union[os.PathLike, str]] = None,
                   engine: str = 'matplotlib', node_color: Optional[NodeColorType] = None,
-                  dpi: int = 300, node_size_scale: float = 1.0, font_size_scale: float = 1.0,
+                  dpi: int = 100, node_size_scale: float = 1.0, font_size_scale: float = 1.0,
                   edge_curvature_scale: float = 1.0):
         if not graph.nodes:
             raise ValueError('Empty graph can not be visualized.')
@@ -76,7 +77,7 @@ class GraphVisualiser:
 
     @staticmethod
     def __draw_with_graphviz(graph: GraphType, save_path: Optional[Union[os.PathLike, str]] = None,
-                             node_color=__get_colors_by_tags.__func__, dpi=300):
+                             node_color=__get_colors_by_tags.__func__, dpi=100):
         nx_graph, nodes = graph_structure_as_nx_graph(graph)
         # Define colors
         if callable(node_color):
@@ -129,7 +130,7 @@ class GraphVisualiser:
             if isinstance(params, dict):
                 params = str(params)[1:-1]
             data['title'] = params
-            data['level'] = operation.distance_to_primary_level
+            data['level'] = distance_to_primary_level(operation)
             data['color'] = to_hex(colors.get(label, colors.get(None)))
             data['font'] = '20px'
             data['labelHighlightBold'] = True
@@ -149,7 +150,7 @@ class GraphVisualiser:
 
     def __draw_with_networkx(self, graph: GraphType, save_path=None,
                              node_color: Optional[NodeColorType] = None,
-                             dpi: int = 300, node_size_scale: float = 1.0, font_size_scale: float = 1.0,
+                             dpi: int = 100, node_size_scale: float = 1.0, font_size_scale: float = 1.0,
                              edge_curvature_scale: float = 1.0,
                              in_graph_converter_function: Callable = graph_structure_as_nx_graph):
         fig, ax = plt.subplots(figsize=(7, 7))
@@ -201,7 +202,7 @@ class GraphVisualiser:
             node_color = [node_color.get(str(node), node_color.get(None)) for node in nodes.values()]
         # Define hierarchy_level
         for node_id, node_data in nx_graph.nodes(data=True):
-            node_data['hierarchy_level'] = nodes[node_id].distance_to_primary_level
+            node_data['hierarchy_level'] = distance_to_primary_level(nodes[node_id])
         # Get nodes positions
         pos, longest_sequence = get_hierarchy_pos(nx_graph)
         node_size = get_scaled_node_size(longest_sequence) * node_size_scale

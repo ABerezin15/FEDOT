@@ -41,24 +41,26 @@ class PopulationalOptimizer(GraphOptimizer):
                  initial_graphs: Sequence[Graph],
                  requirements: PipelineComposerRequirements,
                  graph_generation_params: GraphGenerationParams,
-                 graph_optimizer_params: Optional['GraphOptimizerParameters'] = None):
+                 graph_optimizer_params: Optional['GraphOptimizerParameters'] = None,
+                 ):
         super().__init__(objective, initial_graphs, requirements, graph_generation_params, graph_optimizer_params)
         self.population = None
         self.generations = GenerationKeeper(self.objective, keep_n_best=requirements.keep_n_best)
         self.timer = OptimisationTimer(timeout=self.requirements.timeout)
         self.eval_dispatcher = MultiprocessingDispatcher(adapter=graph_generation_params.adapter,
-                                                         timer=self.timer,
                                                          n_jobs=requirements.n_jobs,
-                                                         graph_cleanup_fn=_unfit_pipeline)
+                                                         graph_cleanup_fn=_unfit_pipeline,
+                                                         delegate_evaluator=graph_generation_params.remote_evaluator)
 
         # early_stopping_generations may be None, so use some obvious max number
         max_stagnation_length = requirements.early_stopping_generations or requirements.num_of_generations
         self.stop_optimization = \
-            GroupedCondition().add_condition(
+            GroupedCondition(results_as_message=True).add_condition(
                 lambda: self.timer.is_time_limit_reached(self.current_generation_num),
                 'Optimisation stopped: Time limit is reached'
             ).add_condition(
-                lambda: self.current_generation_num >= requirements.num_of_generations + 1,
+                lambda: requirements.num_of_generations is not None and
+                        self.current_generation_num >= requirements.num_of_generations + 1,
                 'Optimisation stopped: Max number of generations reached'
             ).add_condition(
                 lambda: self.generations.stagnation_duration >= max_stagnation_length,
@@ -76,7 +78,7 @@ class PopulationalOptimizer(GraphOptimizer):
     def optimise(self, objective: ObjectiveFunction) -> Sequence[OptGraph]:
 
         # eval_dispatcher defines how to evaluate objective on the whole population
-        evaluator = self.eval_dispatcher.dispatch(objective)
+        evaluator = self.eval_dispatcher.dispatch(objective, self.timer)
 
         with self.timer, self._progressbar:
 
@@ -112,6 +114,7 @@ class PopulationalOptimizer(GraphOptimizer):
         self._update_native_generation_numbers(next_population)
         self.generations.append(next_population)
         self._optimisation_callback(next_population, self.generations)
+        self._log_to_history(next_population)
         self.population = next_population
 
         self.log.info(f'Generation num: {self.current_generation_num}')
@@ -122,6 +125,12 @@ class PopulationalOptimizer(GraphOptimizer):
     def _update_native_generation_numbers(self, population: PopulationT):
         for individual in population:
             individual.set_native_generation(self.current_generation_num)
+
+    def _log_to_history(self, population: PopulationT):
+        self.history.add_to_history(population)
+        self.history.add_to_archive_history(self.generations.best_individuals)
+        if self.requirements.history_dir:
+            self.history.save_current_results()
 
     @property
     def _progressbar(self):

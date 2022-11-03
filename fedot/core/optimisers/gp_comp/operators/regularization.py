@@ -1,8 +1,10 @@
 from typing import TYPE_CHECKING
 
-from fedot.core.optimisers.gp_comp.individual import Individual, ParentOperator
+from fedot.core.dag.graph_utils import ordered_subnodes_hierarchy
 from fedot.core.optimisers.gp_comp.operators.operator import PopulationT, EvaluationOperator, Operator
 from fedot.core.optimisers.graph import OptGraph
+from fedot.core.optimisers.opt_history_objects.individual import Individual
+from fedot.core.optimisers.opt_history_objects.parent_operator import ParentOperator
 from fedot.core.optimisers.optimizer import GraphGenerationParams
 from fedot.core.pipelines.node import Node
 from fedot.core.utilities.data_structures import ComparableEnum as Enum
@@ -40,7 +42,7 @@ class Regularization(Operator):
             parent_operator = ParentOperator(type_='regularization',
                                              operators='decremental_regularization',
                                              parent_individuals=ind)
-            subtree_inds = [Individual(OptGraph(node.ordered_subnodes_hierarchy()), parent_operator)
+            subtree_inds = [Individual(OptGraph(deepcopy(ordered_subnodes_hierarchy(node))), parent_operator)
                             for node in ind.graph.nodes
                             if Regularization._is_fitted_subtree(self.graph_generation_params.adapter.restore(node))
                             and node.descriptive_id not in prev_nodes_ids]

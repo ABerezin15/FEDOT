@@ -7,8 +7,6 @@ import numpy as np
 import pytest
 
 from fedot.api.main import Fedot
-from fedot.core.optimisers.gp_comp.gp_params import GPGraphOptimizerParameters
-from fedot.core.optimisers.gp_comp.pipeline_composer_requirements import PipelineComposerRequirements
 from fedot.core.dag.graph import Graph
 from fedot.core.dag.verification_rules import DEFAULT_DAG_RULES
 from fedot.core.data.data import InputData
@@ -16,13 +14,16 @@ from fedot.core.operations.model import Model
 from fedot.core.optimisers.adapters import PipelineAdapter
 from fedot.core.optimisers.fitness import SingleObjFitness
 from fedot.core.optimisers.gp_comp.evaluation import MultiprocessingDispatcher
-from fedot.core.optimisers.gp_comp.individual import Individual, ParentOperator
+from fedot.core.optimisers.gp_comp.gp_params import GPGraphOptimizerParameters
 from fedot.core.optimisers.gp_comp.operators.crossover import CrossoverTypesEnum, Crossover
 from fedot.core.optimisers.gp_comp.operators.mutation import MutationTypesEnum, Mutation
+from fedot.core.optimisers.gp_comp.pipeline_composer_requirements import PipelineComposerRequirements
 from fedot.core.optimisers.objective import PipelineObjectiveEvaluate
 from fedot.core.optimisers.objective.data_source_splitter import DataSourceSplitter
 from fedot.core.optimisers.objective.objective import Objective
-from fedot.core.optimisers.opt_history import OptHistory
+from fedot.core.optimisers.opt_history_objects.individual import Individual
+from fedot.core.optimisers.opt_history_objects.parent_operator import ParentOperator
+from fedot.core.optimisers.opt_history_objects.opt_history import OptHistory
 from fedot.core.pipelines.node import PrimaryNode, SecondaryNode
 from fedot.core.pipelines.pipeline import Pipeline
 from fedot.core.pipelines.pipeline_graph_generation_params import get_pipeline_generation_params
@@ -32,6 +33,7 @@ from fedot.core.utils import fedot_project_root
 from fedot.core.validation.split import tabular_cv_generator, ts_cv_generator
 from test.unit.tasks.test_forecasting import get_ts_data
 from test.unit.validation.test_table_cv import get_classification_data
+from test.unit.visualization.test_composing_history import generate_history, create_mock_graph_individual
 
 
 def scaling_logit_rf_pipeline():
@@ -72,6 +74,17 @@ def _test_individuals_in_history(history: OptHistory):
             ids.update({id(i) for i in parent_operator.parent_individuals})
 
     assert len(uids) == len(ids)
+
+
+@pytest.mark.parametrize('generate_history', [[2, 10, create_mock_graph_individual]], indirect=True)
+def test_history_properties(generate_history):
+    generations_quantity = 2
+    pop_size = 10
+    history = generate_history
+    assert len(history.all_historical_quality()) == pop_size * generations_quantity
+    assert len(history.historical_fitness) == generations_quantity
+    assert len(history.historical_fitness[0]) == pop_size
+    assert len(history.all_historical_fitness) == pop_size * generations_quantity
 
 
 def test_parent_operator():
@@ -129,7 +142,8 @@ def test_ancestor_for_crossover():
         assert crossover_result.parents[1].uid == parent_ind_second.uid
 
 
-def test_newly_generated_history(n_jobs: int = 1):
+@pytest.mark.parametrize('n_jobs', [1, 2])
+def test_newly_generated_history(n_jobs: int):
     project_root_path = str(fedot_project_root())
     file_path_train = os.path.join(project_root_path, 'test/data/simple_classification.csv')
 
@@ -143,15 +157,15 @@ def test_newly_generated_history(n_jobs: int = 1):
 
     history = auto_model.history
 
-    assert auto_model.history is not None
+    assert history is not None
     assert len(history.individuals) == num_of_gens + 1  # num_of_gens + initial assumption
     assert len(history.archive_history) == num_of_gens + 1  # num_of_gens + initial assumption
+    _test_individuals_in_history(history)
     # Test history dumps
     dumped_history_json = history.save()
     loaded_history = OptHistory.load(dumped_history_json)
     assert dumped_history_json is not None
     assert dumped_history_json == loaded_history.save(), 'The history is not equal to itself after reloading!'
-    _test_individuals_in_history(history)
     _test_individuals_in_history(loaded_history)
 
 
@@ -215,13 +229,10 @@ def test_history_backward_compatibility():
     # Pre-computing properties
     all_historical_fitness = history.all_historical_fitness
     historical_fitness = history.historical_fitness
-    historical_pipelines = history.historical_pipelines
     # Assert that properties are not empty
     assert all_historical_fitness
     assert historical_fitness
-    assert historical_pipelines
     # Assert that all history pipelines have fitness
-    assert len(historical_pipelines) == len(all_historical_fitness)
     assert np.shape(history.individuals) == np.shape(historical_fitness)
     # Assert that fitness, graph, parent_individuals, and objective are valid
     assert all(isinstance(ind.fitness, SingleObjFitness) for ind in chain(*history.individuals))
@@ -230,7 +241,6 @@ def test_history_backward_compatibility():
                for ind in chain(*history.individuals)
                for parent_op in ind.operators_from_prev_generation
                for parent_ind in parent_op.parent_individuals)
-    assert isinstance(history._objective, Objective)
     _test_individuals_in_history(history)
 
 

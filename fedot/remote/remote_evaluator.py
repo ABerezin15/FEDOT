@@ -4,12 +4,10 @@ from typing import List, Optional, Sequence, Any, TypeVar, Callable, Hashable
 
 import numpy as np
 
-from fedot.core.dag.graph import Graph
-from fedot.core.dag.graph_verifier import GraphVerifier
 from fedot.core.data.data import InputData
 from fedot.core.log import default_log
-from fedot.core.pipelines.verification import verifier_for_task
 from fedot.core.utilities.serializable import Serializable
+from fedot.core.optimisers.gp_comp.evaluation import DelegateEvaluator
 from fedot.remote.infrastructure.clients.client import Client
 from fedot.utilities.pattern_wrappers import singleton
 
@@ -29,7 +27,8 @@ class RemoteTaskParams:
     :param task_type: string representation of Task class for FEDOT
     :param train_data_idx: indices to subset dataset for fitting
     :param is_multi_modal: is train data multi-modal?
-    :param var_names: variable names for fitting?
+    :param var_names: variable names for features
+    :param target: variable name for target
     :param max_parallel maximal number of parallel remote task
     """
     mode: str = 'local'
@@ -46,7 +45,7 @@ G = TypeVar('G', bound=Serializable)
 
 
 @singleton
-class RemoteEvaluator:
+class RemoteEvaluator(DelegateEvaluator):
     def __init__(self):
         """
         Class for the batch evaluation of pipelines using remote client
@@ -70,12 +69,11 @@ class RemoteEvaluator:
         self.config_for_dump = get_config or _get_config
 
     @property
-    def use_remote(self):
+    def is_enabled(self):
         return self.remote_task_params is not None and self.remote_task_params.mode == 'remote'
 
-    def compute_graphs(self, graphs: Sequence[G], verifier: Optional[GraphVerifier] = None) -> Sequence[G]:
+    def compute_graphs(self, graphs: Sequence[G]) -> Sequence[G]:
         params = self.remote_task_params
-        verifier = verifier or verifier_for_task()
 
         client = self.client
         execution_ids = {}
@@ -85,7 +83,7 @@ class RemoteEvaluator:
         # start of the remote execution for each pipeline
         for graphs_batch in graph_batches:
             for graph in graphs_batch:
-                task_id = self._create_graph_task(graph, verifier)
+                task_id = self._create_graph_task(graph)
                 execution_ids[id(graph)] = task_id
 
             # waiting for readiness of all pipelines
@@ -105,15 +103,11 @@ class RemoteEvaluator:
 
         return final_graphs
 
-    def _create_graph_task(self, graph: G, verifier: Optional[GraphVerifier]) -> Optional[Hashable]:
+    def _create_graph_task(self, graph: G) -> Optional[Hashable]:
         """Serializes task and creates a graph task for remote client.
+
         :return: task id
         """
-        try:
-            if isinstance(graph, Graph) and verifier(graph):
-                pass
-        except ValueError:
-            return None
 
         graph_json, _ = graph.save()
         graph_json = graph_json.replace('\n', '')

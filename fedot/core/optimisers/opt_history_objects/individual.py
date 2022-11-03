@@ -1,13 +1,20 @@
 from __future__ import annotations
 
+import os
 from copy import deepcopy
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 from uuid import uuid4
 
+from fedot.core.dag.graph import Graph
 from fedot.core.log import default_log
 from fedot.core.optimisers.fitness.fitness import Fitness, null_fitness
 from fedot.core.optimisers.graph import OptGraph
+from fedot.core.serializers.serializer import default_load, default_save
+
+if TYPE_CHECKING:
+    from fedot.core.optimisers.opt_history_objects.parent_operator import ParentOperator
+
 
 INDIVIDUAL_COPY_RESTRICTION_MESSAGE = ('`Individual` instance was copied.\n'
                                        'Normally, you don\'t want to do that to keep uid-individual uniqueness.\n'
@@ -17,7 +24,7 @@ INDIVIDUAL_COPY_RESTRICTION_MESSAGE = ('`Individual` instance was copied.\n'
 
 @dataclass(frozen=True)
 class Individual:
-    graph: OptGraph
+    graph: Graph
     parent_operator: Optional[ParentOperator] = field(default=None)
     metadata: Dict[str, Any] = field(default_factory=dict)
     native_generation: Optional[int] = None
@@ -28,12 +35,22 @@ class Individual:
         if self.native_generation is None:
             super().__setattr__('native_generation', native_generation)
 
-    def set_evaluation_result(self, fitness: Fitness, updated_graph: Optional[OptGraph] = None):
-        if self.fitness.valid:
-            raise ValueError('The individual has valid fitness and can not be evaluated again.')
+    def _set_fitness_and_graph(self, fitness: Fitness, updated_graph: Optional[OptGraph] = None):
         super().__setattr__('fitness', fitness)
         if updated_graph is not None:
             super().__setattr__('graph', updated_graph)
+
+    def set_evaluation_result(self, eval_result: Union[GraphEvalResult, Fitness],
+                              updated_graph: Optional[OptGraph] = None):
+        if self.fitness.valid:
+            raise ValueError('The individual has valid fitness and can not be evaluated again.')
+
+        if isinstance(eval_result, Fitness):
+            self._set_fitness_and_graph(eval_result, updated_graph)
+            return
+
+        self._set_fitness_and_graph(eval_result.fitness, eval_result.graph)
+        self.metadata.update(eval_result.metadata)
 
     @property
     def has_native_generation(self) -> bool:
@@ -83,11 +100,18 @@ class Individual:
         operators.reverse()
         return operators
 
+    def save(self, json_file_path: Union[str, os.PathLike] = None) -> Optional[str]:
+        return default_save(obj=self, json_file_path=json_file_path)
+
+    @staticmethod
+    def load(json_str_or_file_path: Union[str, os.PathLike] = None) -> Individual:
+        return default_load(json_str_or_file_path)
+
     def __repr__(self):
         return (f'<Individual {self.uid} | fitness: {self.fitness} | native_generation: {self.native_generation} '
                 f'| graph: {self.graph}>')
 
-    def __eq__(self, other: 'Individual'):
+    def __eq__(self, other: Individual):
         return self.uid == other.uid
 
     def __copy__(self):
@@ -107,19 +131,12 @@ class Individual:
         return result
 
 
-@dataclass(frozen=True)
-class ParentOperator:
-    type_: str
-    operators: Union[Tuple[str, ...], str]
-    parent_individuals: Union[Tuple[Individual, ...], Individual] = field()
-    uid: str = field(default_factory=lambda: str(uuid4()), init=False)
+@dataclass
+class GraphEvalResult:
+    uid_of_individual: str
+    fitness: Fitness
+    graph: OptGraph  # For the case if evaluation needs to assign some values to the graph.
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
-    def __post_init__(self):
-        if isinstance(self.operators, str):
-            object.__setattr__(self, 'operators', (self.operators,))
-        if isinstance(self.parent_individuals, Individual):
-            object.__setattr__(self, 'parent_individuals', (self.parent_individuals,))
-
-    def __repr__(self):
-        return (f'<ParentOperator {self.uid} | type: {self.type_} | operators: {self.operators} '
-                f'| parent_individuals({len(self.parent_individuals)}): {self.parent_individuals}>')
+    def __bool__(self):
+        return self.fitness.valid

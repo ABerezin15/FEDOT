@@ -51,34 +51,13 @@ class Graph(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    def delete_subtree(self, subroot: GraphNode):
+    def delete_subtree(self, subtree: GraphNode):
         """Deletes given node with all its parents.
         Deletes all edges from removed nodes to remaining graph nodes
 
         Args:
             subtree: node to be deleted with all of its parents
                 and their connections amongst the remaining graph nodes
-        """
-        raise NotImplementedError()
-
-    @abstractmethod
-    def distance_to_root_level(self, node: GraphNode) -> int:
-        """Gets distance to the final output node
-
-        Args:
-            node: search starting point
-        """
-        raise NotImplementedError()
-
-    @abstractmethod
-    def nodes_from_layer(self, layer_number: int) -> Sequence[GraphNode]:
-        """Gets all the nodes from the chosen layer up to the surface
-
-        Args:
-            layer_number: max height of diving
-
-        Returns:
-            all nodes from the surface to the ``layer_number`` layer
         """
         raise NotImplementedError()
 
@@ -112,16 +91,6 @@ class Graph(ABC):
             node_parent: where the removing edge comes out
             node_child: where the removing edge enters
             clean_up_leftovers: whether to remove the remaining invalid vertices with edges or not
-        """
-        raise NotImplementedError()
-
-    @abstractmethod
-    def get_nodes_degrees(self) -> Sequence[int]:
-        """Nodes degree as the number of edges the node has:
-            ``degree = #input_edges + #out_edges``
-
-        Returns:
-            nodes degrees ordered according to the nx_graph representation of this graph
         """
         raise NotImplementedError()
 
@@ -197,7 +166,7 @@ class Graph(ABC):
         return len(self.nodes)
 
     def show(self, save_path: Optional[Union[PathLike, str]] = None, engine: str = 'matplotlib',
-             node_color: Optional[NodeColorType] = None, dpi: int = 300,
+             node_color: Optional[NodeColorType] = None, dpi: int = 100,
              node_size_scale: float = 1.0, font_size_scale: float = 1.0, edge_curvature_scale: float = 1.0):
         """Visualizes graph or saves its picture to the specified ``path``
 

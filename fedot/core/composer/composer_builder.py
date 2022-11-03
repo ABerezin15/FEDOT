@@ -1,5 +1,4 @@
 import platform
-from functools import partial
 from multiprocessing import set_start_method
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Type, Union
@@ -14,7 +13,6 @@ from fedot.core.optimisers.gp_comp.gp_params import GPGraphOptimizerParameters
 from fedot.core.optimisers.gp_comp.pipeline_composer_requirements import PipelineComposerRequirements
 from fedot.core.optimisers.initial_graphs_generator import InitialPopulationGenerator, GenerationFunction
 from fedot.core.optimisers.objective.objective import Objective
-from fedot.core.optimisers.opt_history import OptHistory, log_to_history
 from fedot.core.optimisers.optimizer import GraphOptimizer, GraphOptimizerParameters, GraphGenerationParams
 from fedot.core.pipelines.pipeline import Pipeline
 from fedot.core.pipelines.pipeline_graph_generation_params import get_pipeline_generation_params
@@ -27,7 +25,7 @@ from fedot.core.repository.quality_metrics_repository import (
 )
 from fedot.core.repository.tasks import Task
 from fedot.core.utilities.data_structures import ensure_wrapped_in_sequence
-from fedot.core.utils import default_fedot_data_dir
+from fedot.remote.remote_evaluator import RemoteEvaluator
 from fedot.utilities.define_metric_by_task import MetricByTask
 
 
@@ -102,13 +100,6 @@ class ComposerBuilder:
         self.initial_population_generation_function = generation_function
         return self
 
-    def with_history(self, history_folder: Optional[str] = None):
-        self._keep_history = True
-        if history_folder:
-            history_folder = Path(default_fedot_data_dir(), history_folder)
-        self._full_history_dir = history_folder
-        return self
-
     def with_cache(self, pipelines_cache: Optional[OperationsCache] = None,
                    preprocessing_cache: Optional[PreprocessingCache] = None):
         self.pipelines_cache = pipelines_cache
@@ -143,6 +134,12 @@ class ComposerBuilder:
         if not multi_objective:
             # Add default complexity metric for supplementary comparison of individuals with equal fitness
             self.metrics = self.metrics + self._get_default_complexity_metrics()
+        if RemoteEvaluator().is_enabled:
+            # This explicit passing of singleton evaluator isolates optimizer
+            #  from knowing about it. Needed for separation of FEDOT from GOLEM.
+            #  Best solution would be to avoid singleton init & access altogether,
+            #  instead passing remote evaluator & its params explicitly through API.
+            self.graph_generation_params.remote_evaluator = RemoteEvaluator()
 
         objective = Objective(self.metrics, multi_objective)
 
@@ -158,17 +155,9 @@ class ComposerBuilder:
                                        graph_generation_params=self.graph_generation_params,
                                        graph_optimizer_params=self.optimizer_parameters,
                                        **self.optimizer_external_parameters)
-        history = None
-        if self._keep_history:
-            # Clean results of the previous run
-            history = OptHistory(objective)
-            history.clean_results(self._full_history_dir)
-            history_callback = partial(log_to_history, history=history, save_dir=self._full_history_dir)
-            optimiser.set_optimisation_callback(history_callback)
 
         composer = self.composer_cls(optimiser,
                                      self.composer_requirements,
-                                     history,
                                      self.pipelines_cache,
                                      self.preprocessing_cache)
 

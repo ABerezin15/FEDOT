@@ -1,18 +1,23 @@
+from __future__ import annotations
+
 from abc import abstractmethod
 from copy import deepcopy
-from typing import TypeVar, Generic, Type, Optional, Dict, Any, Callable, Tuple, Sequence, Union
+from typing import TYPE_CHECKING, TypeVar, Generic, Type, Optional, Dict, Any, Callable, Tuple, Sequence, Union
 
+from fedot.core.dag.graph import Graph
 from fedot.core.log import default_log
-from fedot.core.optimisers.gp_comp.individual import Individual
-from fedot.core.optimisers.gp_comp.operators.operator import PopulationT
 from fedot.core.optimisers.graph import OptGraph, OptNode
 from fedot.core.adapter.adapt_registry import AdaptRegistry
+from fedot.core.optimisers.opt_history_objects.individual import Individual
+
+if TYPE_CHECKING:
+    from fedot.core.optimisers.gp_comp.operators.operator import PopulationT
 
 DomainStructureType = TypeVar('DomainStructureType')
 
 
 class BaseOptimizationAdapter(Generic[DomainStructureType]):
-    def __init__(self, base_graph_class: Type[DomainStructureType]):
+    def __init__(self, base_graph_class: Type[DomainStructureType] = Graph):
         self._log = default_log(self)
         self.domain_graph_class = base_graph_class
         self.opt_graph_class = OptGraph
@@ -91,7 +96,7 @@ class BaseOptimizationAdapter(Generic[DomainStructureType]):
             return self._restore(item)
         elif isinstance(item, Individual):
             return self._restore(item.graph, item.metadata)
-        elif isinstance(item, Sequence) and type(item[0]) is Individual:
+        elif isinstance(item, Sequence) and isinstance(item[0], Individual):
             return [self._restore(ind.graph, ind.metadata) for ind in item]
         else:
             return item
@@ -105,6 +110,16 @@ class BaseOptimizationAdapter(Generic[DomainStructureType]):
     def _restore(self, opt_graph: OptGraph, metadata: Optional[Dict[str, Any]] = None) -> DomainStructureType:
         """Implementation of ``restore`` for single graph."""
         raise NotImplementedError()
+
+
+class IdentityAdapter(BaseOptimizationAdapter[DomainStructureType]):
+    """Identity adapter that performs no transformation, returning same graphs."""
+
+    def _adapt(self, adaptee: DomainStructureType) -> OptGraph:
+        return adaptee
+
+    def _restore(self, opt_graph: OptGraph, metadata: Optional[Dict[str, Any]] = None) -> DomainStructureType:
+        return opt_graph
 
 
 class DirectAdapter(BaseOptimizationAdapter[DomainStructureType]):

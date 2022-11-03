@@ -8,6 +8,7 @@ import pandas as pd
 from fedot.api.api_utils.api_composer import ApiComposer
 from fedot.api.api_utils.api_data import ApiDataProcessor
 from fedot.api.api_utils.api_data_analyser import DataAnalyser
+from fedot.api.api_utils.data_definition import FeaturesType, TargetType
 from fedot.api.api_utils.metrics import ApiMetrics
 from fedot.api.api_utils.params import ApiParams
 from fedot.api.api_utils.predefined_model import PredefinedModel
@@ -15,7 +16,7 @@ from fedot.core.constants import DEFAULT_API_TIMEOUT_MINUTES
 from fedot.core.data.data import InputData, OutputData
 from fedot.core.data.multi_modal import MultiModalData
 from fedot.core.data.visualisation import plot_biplot, plot_forecast, plot_roc_auc
-from fedot.core.optimisers.opt_history import OptHistory
+from fedot.core.optimisers.opt_history_objects.opt_history import OptHistory
 from fedot.core.pipelines.pipeline import Pipeline
 from fedot.core.pipelines.ts_wrappers import out_of_sample_ts_forecast, convert_forecast_to_output
 from fedot.core.repository.quality_metrics_repository import MetricsRepository
@@ -29,9 +30,6 @@ from fedot.remote.remote_evaluator import RemoteEvaluator
 from fedot.utilities.project_import_export import export_project_to_zip, import_project_from_zip
 
 NOT_FITTED_ERR_MSG = 'Model not fitted yet'
-
-FeaturesType = Union[str, np.ndarray, pd.DataFrame, InputData, dict]
-TargetType = Union[str, np.ndarray, pd.Series, dict]
 
 
 class Fedot:
@@ -79,7 +77,7 @@ class Fedot:
         initial_assumption: initial assumption for composer
         genetic_scheme: name of the genetic scheme
         history_folder: name of the folder for composing history
-        metric:  metric for quality calculation during composing, also is used for tuning if with_tuning=True
+        metric:  metric for quality calculation during composing, also is used for tuning if ``with_tuning=True``
         collect_intermediate_metric: save metrics for intermediate (non-root) nodes in pipeline
         preset: name of preset for model building (e.g. 'best_quality', 'fast_train', 'gpu'):
 
@@ -142,7 +140,7 @@ class Fedot:
         self.history: Optional[OptHistory] = None
 
     def fit(self,
-            features: Union[str, np.ndarray, pd.DataFrame, InputData, dict],
+            features: FeaturesType,
             target: TargetType = 'target',
             predefined_model: Union[str, Pipeline] = None) -> Pipeline:
         """Fits the graph with a predefined structure or compose and fit the new graph
@@ -432,7 +430,7 @@ class Fedot:
 
     def _init_remote_if_necessary(self):
         remote = RemoteEvaluator()
-        if remote.use_remote and remote.remote_task_params is not None:
+        if remote.is_enabled and remote.remote_task_params is not None:
             task = self.params.api_params['task']
             if task.task_type is TaskTypesEnum.ts_forecasting:
                 task_str = \
@@ -443,7 +441,7 @@ class Fedot:
             remote.remote_task_params.task_type = task_str
             remote.remote_task_params.is_multi_modal = isinstance(self.train_data, MultiModalData)
 
-            if isinstance(self.target, str):
+            if isinstance(self.target, str) and remote.remote_task_params.target is None:
                 remote.remote_task_params.target = self.target
 
     def _train_pipeline_on_full_dataset(self, recommendations: dict, full_train_not_preprocessed):

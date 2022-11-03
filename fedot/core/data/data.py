@@ -327,11 +327,15 @@ class InputData(Data):
 
     @property
     def num_classes(self) -> Optional[int]:
+        """Returns number of classes that are present in the target.
+        NB: if some labels are not present in this data, then
+        number of classes can be less than in the full dataset!"""
         unique_values = self.class_labels
         return len(unique_values) if unique_values is not None else None
 
     @property
     def class_labels(self) -> Optional[int]:
+        """Returns unique class labels that are present in the target"""
         if self.task.task_type == TaskTypesEnum.classification and self.target is not None:
             return np.unique(self.target)
         else:
@@ -515,11 +519,11 @@ def data_type_is_image(data: InputData) -> bool:
     return data.data_type is DataTypesEnum.image
 
 
-def get_indices_from_file(data_frame, file_path):
-    if 'datetime' in data_frame.columns:
+def get_indices_from_file(data_frame, file_path, idx_column='datetime'):
+    if idx_column in data_frame.columns:
         df = pd.read_csv(file_path,
-                         parse_dates=['datetime'])
-        idx = [str(d) for d in df['datetime']]
+                         parse_dates=[idx_column])
+        idx = [str(d) for d in df[idx_column]]
         return idx
     return np.arange(0, len(data_frame))
 

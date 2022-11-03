@@ -22,14 +22,13 @@ from fedot.core.optimisers.gp_comp.gp_params import GPGraphOptimizerParameters
 from fedot.core.optimisers.gp_comp.operators.inheritance import GeneticSchemeTypesEnum
 from fedot.core.optimisers.gp_comp.operators.mutation import MutationTypesEnum
 from fedot.core.optimisers.gp_comp.pipeline_composer_requirements import PipelineComposerRequirements
-from fedot.core.optimisers.opt_history import OptHistory
+from fedot.core.optimisers.opt_history_objects.opt_history import OptHistory
 from fedot.core.optimisers.optimizer import GraphGenerationParams
 from fedot.core.pipelines.pipeline import Pipeline
 from fedot.core.pipelines.pipeline_node_factory import PipelineOptNodeFactory
 from fedot.core.pipelines.tuning.tuner_builder import TunerBuilder
 from fedot.core.pipelines.tuning.unified import PipelineTuner
 from fedot.core.pipelines.verification import rules_by_task
-from fedot.core.repository.operation_types_repository import get_operations_for_task
 from fedot.core.repository.pipeline_operation_repository import PipelineOperationRepository
 from fedot.core.repository.quality_metrics_repository import MetricsRepository, MetricType, MetricsEnum
 from fedot.core.repository.tasks import Task, TaskTypesEnum
@@ -122,6 +121,9 @@ class ApiComposer:
             collect_intermediate_metric=composer_params['collect_intermediate_metric'],
             keep_n_best=composer_params['keep_n_best'],
 
+            keep_history=True,
+            history_dir=composer_params.get('history_folder'),
+
             cv_folds=composer_params['cv_folds'],
             validation_blocks=composer_params['validation_blocks'],
         )
@@ -197,8 +199,9 @@ class ApiComposer:
                 assumption_handler.fit_assumption_and_check_correctness(initial_assumption[0],
                                                                         pipelines_cache=self.pipelines_cache,
                                                                         preprocessing_cache=self.preprocessing_cache)
+
         self.log.message(
-            f'Initial pipeline was fitted in {round(self.timer.assumption_fit_spend_time.total_seconds())} sec.')
+            f'Initial pipeline was fitted in {round(self.timer.assumption_fit_spend_time.total_seconds(), 1)} sec.')
 
         n_jobs = determine_n_jobs(api_params['n_jobs'])
         self.preset_name = assumption_handler.propose_preset(preset, self.timer, n_jobs=n_jobs)
@@ -256,7 +259,6 @@ class ApiComposer:
             .with_optimizer_params(parameters=optimizer_params,
                                    external_parameters=composer_params.get('optimizer_external_params')) \
             .with_metrics(metric_functions) \
-            .with_history(composer_params.get('history_folder')) \
             .with_cache(self.pipelines_cache, self.preprocessing_cache) \
             .with_graph_generation_param(graph_generation_params=graph_generation_params) \
             .build()
@@ -302,8 +304,8 @@ class ApiComposer:
         if self.timer.have_time_for_tuning():
             # Tune all nodes in the pipeline
             with self.timer.launch_tuning():
-                self.log.message(f'Hyperparameters tuning started with {round(timeout_for_tuning)} sec. timeout')
                 self.was_tuned = False
+                self.log.message(f'Hyperparameters tuning started with {round(timeout_for_tuning)} min. timeout')
                 tuned_pipeline = tuner.tune(pipeline_gp_composed)
                 self.was_tuned = True
                 self.log.message('Hyperparameters tuning finished')
@@ -330,7 +332,8 @@ def _divide_parameters(common_dict: dict) -> List[dict]:
                                 early_stopping_generations=None, optimizer=None, optimizer_external_params=None,
                                 collect_intermediate_metric=False, max_pipeline_fit_time=None,
                                 initial_assumption=None, preset='auto',
-                                use_pipelines_cache=True, use_preprocessing_cache=True, cache_folder=None)
+                                use_pipelines_cache=True, use_preprocessing_cache=True, cache_folder=None,
+                                keep_history=True, history_dir=None,)
 
     tuner_params_dict = dict(with_tuning=False)
 

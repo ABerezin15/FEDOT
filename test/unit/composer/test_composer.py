@@ -17,7 +17,8 @@ from fedot.core.optimisers.gp_comp.gp_params import GPGraphOptimizerParameters
 from fedot.core.optimisers.gp_comp.operators.inheritance import GeneticSchemeTypesEnum
 from fedot.core.optimisers.gp_comp.operators.selection import SelectionTypesEnum
 from fedot.core.optimisers.gp_comp.pipeline_composer_requirements import PipelineComposerRequirements
-from fedot.core.optimisers.objective import Objective, DataSourceSplitter, PipelineObjectiveEvaluate
+from fedot.core.optimisers.objective import Objective, PipelineObjectiveEvaluate
+from fedot.core.optimisers.objective.data_source_splitter import DataSourceSplitter
 from fedot.core.pipelines.node import PrimaryNode, SecondaryNode
 from fedot.core.pipelines.pipeline import Pipeline
 from fedot.core.pipelines.pipeline_graph_generation_params import get_pipeline_generation_params
@@ -144,7 +145,6 @@ def test_composition_time(data_fixture, request):
     params = GPGraphOptimizerParameters(pop_size=2)
 
     builder = ComposerBuilder(task) \
-        .with_history() \
         .with_requirements(req_terminated_evolution) \
         .with_optimizer_params(params) \
         .with_metrics(metric_function)
@@ -161,7 +161,6 @@ def test_composition_time(data_fixture, request):
     params = GPGraphOptimizerParameters(pop_size=2)
 
     builder = ComposerBuilder(task) \
-        .with_history() \
         .with_requirements(req_completed_evolution) \
         .with_optimizer_params(params) \
         .with_metrics(metric_function)
@@ -187,7 +186,6 @@ def test_parameter_free_composer_build_pipeline_correct(data_fixture, request):
     params = GPGraphOptimizerParameters(pop_size=2, genetic_scheme_type=GeneticSchemeTypesEnum.parameter_free)
 
     gp_composer = ComposerBuilder(task=Task(TaskTypesEnum.classification)) \
-        .with_history() \
         .with_optimizer_params(params) \
         .with_requirements(req) \
         .with_metrics(ClassificationMetricsEnum.ROCAUC) \
@@ -262,7 +260,6 @@ def test_gp_composer_with_adaptive_depth(data_fixture, request):
                                         adaptive_depth_max_stagnation=num_gen - 1,
                                         genetic_scheme_type=GeneticSchemeTypesEnum.steady_state)
     composer = ComposerBuilder(task=Task(TaskTypesEnum.classification)) \
-        .with_history() \
         .with_requirements(req) \
         .with_optimizer_params(params) \
         .with_metrics(quality_metric) \

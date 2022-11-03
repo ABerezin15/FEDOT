@@ -1,6 +1,7 @@
+from fedot.core.dag.graph_utils import distance_to_primary_level
 from fedot.core.optimisers.adapters import PipelineAdapter
 from fedot.core.optimisers.fitness.multi_objective_fitness import MultiObjFitness
-from fedot.core.optimisers.gp_comp.individual import Individual
+from fedot.core.optimisers.opt_history_objects.individual import Individual
 from fedot.core.pipelines.convert import graph_structure_as_nx_graph, pipeline_template_as_nx_graph
 from fedot.core.pipelines.node import PrimaryNode, SecondaryNode
 from fedot.core.pipelines.pipeline import Pipeline
@@ -77,7 +78,7 @@ def test_hierarchy_pos():
 
     graph, node_labels = graph_structure_as_nx_graph(pipeline)
     for n, data in graph.nodes(data=True):
-        data['hierarchy_level'] = node_labels[n].distance_to_primary_level
+        data['hierarchy_level'] = distance_to_primary_level(node_labels[n])
         node_labels[n] = str(node_labels[n])
 
     pos, _ = get_hierarchy_pos(graph)

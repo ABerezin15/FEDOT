@@ -1,15 +1,35 @@
+import json
+import os
 from importlib import import_module
 from inspect import isclass, isfunction, ismethod, signature
 from json import JSONDecoder, JSONEncoder
-from typing import Any, Callable, Dict, Type, TypeVar, Union
+from typing import Any, Callable, Dict, Optional, Type, TypeVar, Union
 
+from fedot.core.dag.linked_graph_node import LinkedGraphNode
 from fedot.core.optimisers.fitness.fitness import Fitness
-from fedot.core.pipelines.node import NodeMetadata
 from fedot.core.optimisers.objective.objective import Objective
+from fedot.core.pipelines.node import NodeMetadata
 
 MODULE_X_NAME_DELIMITER = '/'
 INSTANCE_OR_CALLABLE = TypeVar('INSTANCE_OR_CALLABLE', object, Callable)
 CLASS_PATH_KEY = '_class_path'
+
+# Mapping between class paths for backward compatibility for renamed/moved classes
+LEGACY_CLASS_PATHS = {
+    'fedot.core.optimisers.gp_comp.individual/Individual':
+        'fedot.core.optimisers.opt_history_objects.individual/Individual',
+    'fedot.core.optimisers.gp_comp.individual/ParentOperator':
+        'fedot.core.optimisers.opt_history_objects.parent_operator/ParentOperator',
+    'fedot.core.optimisers.opt_history/OptHistory':
+        'fedot.core.optimisers.opt_history_objects.opt_history/OptHistory',
+
+    'fedot.core.dag.graph_node/GraphNode':
+        'fedot.core.dag.linked_graph_node/LinkedGraphNode',
+    'fedot.core.dag.graph_operator/GraphOperator':
+        'fedot.core.dag.linked_graph/LinkedGraph',
+    'fedot.core.dag.graph_operator/GraphOperator._empty_postprocess':
+        'fedot.core.dag.linked_graph/LinkedGraph._empty_postprocess',
+}
 
 
 class Serializer(JSONEncoder, JSONDecoder):
@@ -29,12 +49,10 @@ class Serializer(JSONEncoder, JSONDecoder):
             from uuid import UUID
 
             from fedot.core.dag.graph import Graph
-            from fedot.core.dag.graph_node import GraphNode
             from fedot.core.operations.operation import Operation
-            from fedot.core.optimisers.gp_comp.individual import Individual
-            from fedot.core.optimisers.graph import OptGraph, OptNode
-            from fedot.core.optimisers.opt_history import OptHistory
-            from fedot.core.optimisers.gp_comp.individual import ParentOperator
+            from fedot.core.optimisers.opt_history_objects.individual import Individual
+            from fedot.core.optimisers.opt_history_objects.opt_history import OptHistory
+            from fedot.core.optimisers.opt_history_objects.parent_operator import ParentOperator
             from fedot.core.utilities.data_structures import ComparableEnum
 
             from .coders import (
@@ -61,7 +79,7 @@ class Serializer(JSONEncoder, JSONDecoder):
                 Fitness: basic_serialization,
                 Individual: basic_serialization,
                 NodeMetadata: basic_serialization,
-                GraphNode: {_to_json: graph_node_to_json, _from_json: any_from_json},
+                LinkedGraphNode: {_to_json: graph_node_to_json, _from_json: any_from_json},
                 Graph: {_to_json: any_to_json, _from_json: graph_from_json},
                 Operation: {_to_json: operation_to_json, _from_json: any_from_json},
                 OptHistory: {_to_json: opt_history_to_json, _from_json: opt_history_from_json},
@@ -69,10 +87,6 @@ class Serializer(JSONEncoder, JSONDecoder):
                 UUID: {_to_json: uuid_to_json, _from_json: uuid_from_json},
                 ComparableEnum: {_to_json: enum_to_json, _from_json: enum_from_json},
             }
-            Serializer.CODERS_BY_TYPE.update({
-                OptNode: Serializer.CODERS_BY_TYPE[GraphNode],
-                OptGraph: Serializer.CODERS_BY_TYPE[Graph],
-            })
 
     @staticmethod
     def _get_field_checker(obj: Union[INSTANCE_OR_CALLABLE, Type[INSTANCE_OR_CALLABLE]]) -> Callable[..., bool]:
@@ -81,7 +95,7 @@ class Serializer(JSONEncoder, JSONDecoder):
         return isinstance
 
     @staticmethod
-    def _get_base_type(obj: Union[INSTANCE_OR_CALLABLE, Type[INSTANCE_OR_CALLABLE]]) -> int:
+    def _get_base_type(obj: Union[INSTANCE_OR_CALLABLE, Type[INSTANCE_OR_CALLABLE]]) -> Optional[Type]:
         contains = Serializer._get_field_checker(obj)
         for k_type in Serializer.CODERS_BY_TYPE:
             if contains(obj, k_type):
@@ -139,6 +153,7 @@ class Serializer(JSONEncoder, JSONDecoder):
 
         :return: class, function or method type
         """
+        class_path = LEGACY_CLASS_PATHS.get(class_path, class_path)
         module_name, class_name = class_path.split(MODULE_X_NAME_DELIMITER)
         obj_cls = import_module(module_name)
         for sub in class_name.split('.'):
@@ -164,3 +179,29 @@ class Serializer(JSONEncoder, JSONDecoder):
                 return obj_cls
             raise TypeError(f'Parsed obj_cls={obj_cls} is not serializable, but should be')
         return json_obj
+
+
+def default_save(obj: Any, json_file_path: Union[str, os.PathLike] = None) -> Optional[str]:
+    """ Default save to json using Serializer """
+    if json_file_path is None:
+        return json.dumps(obj, indent=4, cls=Serializer)
+    with open(json_file_path, mode='w') as json_file:
+        json.dump(obj, json_file, indent=4, cls=Serializer)
+
+
+def default_load(json_str_or_file_path: Union[str, os.PathLike] = None) -> Any:
+    """ Default load from json using Serializer """
+    def load_as_file_path():
+        with open(json_str_or_file_path, mode='r') as json_file:
+            return json.load(json_file, cls=Serializer)
+
+    def load_as_json_str():
+        return json.loads(json_str_or_file_path, cls=Serializer)
+
+    if isinstance(json_str_or_file_path, os.PathLike):
+        return load_as_file_path()
+
+    try:
+        return load_as_json_str()
+    except json.JSONDecodeError:
+        return load_as_file_path()
