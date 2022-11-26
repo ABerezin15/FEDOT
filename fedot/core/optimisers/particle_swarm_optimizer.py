@@ -2,6 +2,7 @@ import datetime
 from typing import Sequence, Callable
 import numpy as np
 import random
+import os
 
 from fedot.core.repository.tasks import Task
 from fedot.core.composer.gp_composer.gp_composer import GPComposer
@@ -23,9 +24,10 @@ from fedot.core.optimisers.gp_comp.gp_operators import random_graph
 from fedot.core.optimisers.optimizer import GraphGenerationParams
 from cases.credit_scoring.credit_scoring_problem import get_scoring_data
 from fedot.core.visualisation.opt_viz_extra import OptHistoryExtraVisualizer
+from fedot.core.utils import fedot_project_root
 
-random.seed(12)
-np.random.seed(12)
+# random.seed(12)
+# np.random.seed(12)
 
 
 class ParticleSwarmOptimizer(PopulationalOptimizer):
@@ -41,8 +43,8 @@ class ParticleSwarmOptimizer(PopulationalOptimizer):
         self.mutation = Mutation(graph_optimizer_params, requirements, graph_generation_params)
         self.initial_individuals = [Individual(graph) for graph in initial_graphs]
         self.w = 0.9  # inertia weight
-        self.c1 = 0.84  # acceleration coefficient 1
-        self.c2 = 0.38  # acceleration coefficient 2
+        self.c1 = 0.5  # acceleration coefficient 1
+        self.c2 = 0.5  # acceleration coefficient 2
         self.r1 = np.random.random_sample()  # random number on interval [0, 1)
         self.r2 = np.random.random_sample()  # random number on interval [0, 1)
         self.r3 = np.random.random_sample()  # random number on interval [0, 1)
@@ -84,9 +86,6 @@ class ParticleSwarmOptimizer(PopulationalOptimizer):
 
             if new_position.fitness > global_best.fitness:
                 global_best = new_position
-            self.w = self.w - 0.02
-            self.c1 = self.c1 - 0.02
-            self.c2 = self.c2 + 0.02
 
         return population
 
@@ -115,7 +114,7 @@ def run_pso(train_file_path, test_file_path,
 
     optimiser_parameters = GPGraphOptimizerParameters(
         pop_size=20,
-        crossover_prob=0.8, mutation_prob=0.9,
+        crossover_prob=1, mutation_prob=1,
         mutation_types=[MutationTypesEnum.simple],
         crossover_types=[CrossoverTypesEnum.one_point])
 
@@ -141,5 +140,8 @@ def run_pso(train_file_path, test_file_path,
 
 
 if __name__ == '__main__':
-    full_path_train, full_path_test = get_scoring_data()
+    file_path_train = 'cases/data/scoring/scoring_train.csv'
+    full_path_train = os.path.join(str(fedot_project_root()), file_path_train)
+    file_path_test = 'cases/data/scoring/scoring_test.csv'
+    full_path_test = os.path.join(str(fedot_project_root()), file_path_test)
     run_pso(full_path_train, full_path_test)
