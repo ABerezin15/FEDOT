@@ -26,8 +26,8 @@ from cases.credit_scoring.credit_scoring_problem import get_scoring_data
 from fedot.core.visualisation.opt_viz_extra import OptHistoryExtraVisualizer
 from fedot.core.utils import fedot_project_root
 
-# random.seed(12)
-# np.random.seed(12)
+random.seed(12)
+np.random.seed(12)
 
 
 class ParticleSwarmOptimizer(PopulationalOptimizer):
@@ -93,6 +93,7 @@ class ParticleSwarmOptimizer(PopulationalOptimizer):
 def results_visualization(history, composed_pipelines):
     visualiser = OptHistoryExtraVisualizer()
     visualiser.visualise_history(history)
+    history.show()
     composed_pipelines.show()
 
 
