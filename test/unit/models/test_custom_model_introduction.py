@@ -71,7 +71,7 @@ def get_starting_pipeline(with_params=True):
 def get_input_data():
     test_file_path = str(os.path.dirname(__file__))
     df = pd.read_csv(os.path.join(test_file_path, '../../data/simple_sea_level.csv'))
-    time_series = np.array(df['value'])
+    time_series = np.array(df['Level'])
     len_forecast = 50
     train_input, predict_input = \
         train_test_data_setup(InputData(idx=range(len(time_series)),
@@ -112,7 +112,7 @@ def prepare_data():
                                                    task=task)
 
         ds[f'data_source_ts/exog_{i}'] = InputData(idx=idx,
-                                                   features=df[:, i],
+                                                   features=deepcopy(df[:, i]),
                                                    target=deepcopy(hist),
                                                    data_type=DataTypesEnum.ts,
                                                    task=task)
@@ -127,7 +127,10 @@ def model_fit(idx: np.array, features: np.array, target: np.array, params: dict)
 
 
 def model_predict(fitted_model: Any, idx: np.array, features: np.array, params: dict):
-    return features[:, 0], 'ts'
+    # there we can face with several variant due to mutations
+    if len(features.shape) > 1:
+        return features[:, 0], 'ts'
+    return features, 'ts'
 
 
 def get_simple_pipeline(multi_data):
@@ -191,7 +194,7 @@ def test_save_pipeline_with_custom():
     pipeline = get_centered_pipeline()
     pipeline.fit_from_scratch(train_input)
 
-    pipeline.save(path='test_pipeline')
+    pipeline.save(path='test_pipeline', create_subdir=False)
     json_path_load = create_correct_path('test_pipeline')
     new_pipeline = Pipeline.from_serialized(json_path_load)
     predicted_output_after_export = new_pipeline.predict(predict_input)

@@ -60,12 +60,22 @@ def _split_multi_time_series(data: InputData, task, *args, **kwargs):
     input_target = data.target
     forecast_length = task.task_params.forecast_length
 
-    # Source time series divide into two parts
-    x_train = input_features[:-forecast_length]
-    x_test = input_features[:-forecast_length]
+    if kwargs.get('validation_blocks') is not None:
+        # It is required to split data for in-sample forecasting
+        forecast_length = forecast_length * kwargs.get('validation_blocks')
+        x_train = input_features[:-forecast_length]
+        x_test = input_features
 
-    y_train = input_target[:-forecast_length]
-    y_test = input_target[-forecast_length:, :1]
+        y_train = input_target[:-forecast_length]
+        y_test = input_target[-forecast_length:, 0]
+
+    else:
+        # Source time series divide into two parts
+        x_train = input_features[:-forecast_length]
+        x_test = input_features[:-forecast_length]
+
+        y_train = input_target[:-forecast_length]
+        y_test = input_target[-forecast_length:, 0]
 
     idx_train = data.idx[:-forecast_length]
     idx_test = data.idx[-forecast_length:]
@@ -210,13 +220,14 @@ def train_test_data_setup(data: Union[InputData, MultiModalData], split_ratio=0.
                                                                  Union[InputData, MultiModalData]]:
     """ Function for train and test split for both InputData and MultiModalData
 
-    :param data: data for train and test splitting
-    :param split_ratio: threshold for partitioning
-    :param shuffle_flag: is data needed to be shuffled or not
-    :param kwargs: additional optional parameters such as number of validation blocks
+    Args:
+        data: data for train and test splitting
+        split_ratio: threshold for partitioning
+        shuffle_flag: is data needed to be shuffled or not
+        kwargs: additional optional parameters such as number of validation blocks
 
-    :return train_data: data for train
-    :return test_data: data for validation
+    Returns:
+        data for train, data for validation
     """
     if isinstance(data, InputData):
         train_data, test_data = _train_test_single_data_setup(data, split_ratio, shuffle_flag, **kwargs)

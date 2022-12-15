@@ -1,21 +1,22 @@
 from dataclasses import dataclass
-from typing import Any, List, Optional, Tuple, Union, Iterable
+from typing import Any, List, Optional, Tuple, Union
 
 import numpy as np
 
-from fedot.core.dag.graph_node import GraphNode
 from fedot.core.dag.linked_graph_node import LinkedGraphNode
 from fedot.core.data.data import InputData, OutputData
 from fedot.core.data.merge.data_merger import DataMerger
 from fedot.core.log import default_log
-from fedot.core.operations.operation_parameters import OperationParameters
 from fedot.core.operations.factory import OperationFactory
 from fedot.core.operations.operation import Operation
+from fedot.core.operations.operation_parameters import OperationParameters
 from fedot.core.optimisers.timer import Timer
 from fedot.core.repository.operation_types_repository import OperationTypesRepository
+from fedot.core.serializers.serializer import register_serializable
 from fedot.core.utils import DEFAULT_PARAMS_STUB
 
 
+@register_serializable
 @dataclass
 class NodeMetadata:
     """Dataclass. :class:`Node` metadata
@@ -111,6 +112,11 @@ class Node(LinkedGraphNode):
         self.parameters = updated_parameters
 
     @property
+    def name(self) -> str:
+        """ Returns str name of operation """
+        return self.operation.operation_type
+
+    @property
     def operation(self) -> Operation:
         """Returns node operation object
 
@@ -171,13 +177,13 @@ class Node(LinkedGraphNode):
         Returns:
             OutputData: values predicted on the provided ``input_data``
         """
-
         if self.fitted_operation is None:
             with Timer() as t:
                 self.fitted_operation, operation_predict = self.operation.fit(params=self._parameters,
                                                                               data=input_data)
                 self.fit_time_in_seconds = round(t.seconds_from_start, 3)
         else:
+
             operation_predict = self.operation.predict_for_fit(fitted_operation=self.fitted_operation,
                                                                data=input_data,
                                                                params=self._parameters)
@@ -389,7 +395,6 @@ class SecondaryNode(Node):
         self.log.debug(f'Trying to fit secondary node with operation: {self.operation}')
 
         secondary_input = self._input_from_parents(input_data=input_data, parent_operation='fit')
-
         return super().fit(input_data=secondary_input)
 
     def predict(self, input_data: InputData, output_mode: str = 'default') -> OutputData:
@@ -430,9 +435,7 @@ class SecondaryNode(Node):
 
         parent_results, _ = _combine_parents(parent_nodes, input_data,
                                              parent_operation)
-
         secondary_input = DataMerger.get(parent_results).merge()
-
         # Update info about visited nodes
         parent_operations = [node.operation.operation_type for node in parent_nodes]
         secondary_input.supplementary_data.previous_operations = parent_operations
@@ -466,6 +469,7 @@ def _combine_parents(parent_nodes: List[Node],
         target = input_data.target
     parent_results = []
     for parent in parent_nodes:
+
         if parent_operation == 'predict':
             prediction = parent.predict(input_data=input_data)
             parent_results.append(prediction)

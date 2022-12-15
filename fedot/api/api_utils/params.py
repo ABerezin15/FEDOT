@@ -8,6 +8,7 @@ from fedot.core.constants import AUTO_PRESET_NAME, DEFAULT_FORECAST_LENGTH
 from fedot.core.data.data import InputData
 from fedot.core.data.multi_modal import MultiModalData
 from fedot.core.log import Log, default_log
+from fedot.core.repository.dataset_types import DataTypesEnum
 from fedot.core.repository.tasks import Task, TaskParams, TaskTypesEnum, TsForecastingParams
 from fedot.core.utilities.random import RandomStateHandler
 
@@ -26,11 +27,13 @@ class ApiParams:
     def initialize_params(self, input_params: Dict[str, Any]):
         """ Merge input_params dictionary with several parameters for AutoML algorithm """
         self.get_initial_params(input_params)
-        preset_operations = OperationsPreset(task=self.task, preset_name=self.api_params['preset'])
-        self.api_params = preset_operations.composer_params_based_on_preset(api_params=self.api_params)
 
         # Final check for correctness for timeout and generations
         self.api_params = check_timeout_vs_generations(self.api_params)
+
+    def update_available_operations_by_preset(self, data: InputData):
+        preset_operations = OperationsPreset(task=self.task, preset_name=self.api_params['preset'])
+        self.api_params = preset_operations.composer_params_based_on_preset(self.api_params, data.data_type)
 
     def get_initial_params(self, input_params: Dict[str, Any]):
         self._parse_input_params(input_params)
@@ -57,9 +60,9 @@ class ApiParams:
         else:
             if 'label_encoded' in recommendations:
                 self.log.info("Change preset due to label encoding")
-                self.change_preset_for_label_encoded_data(input_data.task)
+                self.change_preset_for_label_encoded_data(input_data.task, input_data.data_type)
 
-    def change_preset_for_label_encoded_data(self, task: Task):
+    def change_preset_for_label_encoded_data(self, task: Task, data_type: DataTypesEnum):
         """ Change preset on tree like preset, if data had been label encoded """
         if 'preset' in self.api_params:
             preset_name = ''.join((self.api_params['preset'], '*tree'))
@@ -69,7 +72,7 @@ class ApiParams:
 
         if self.api_params.get('available_operations') is not None:
             del self.api_params['available_operations']
-        self.api_params = preset_operations.composer_params_based_on_preset(api_params=self.api_params)
+        self.api_params = preset_operations.composer_params_based_on_preset(self.api_params, data_type)
         param_dict = {
             'task': self.task,
             'logger': self.log
@@ -94,6 +97,15 @@ class ApiParams:
         self.api_params.update(evo_params)
         if 'preset' not in input_params['composer_tuner_params']:
             self.api_params['preset'] = 'auto'
+
+        # If early_stopping_generations is not specified,
+        # than estimate it as in time-based manner as: 0.33 * composing_timeout.
+        # The minimal number of generations is 5.
+        if 'early_stopping_iterations' not in input_params['composer_tuner_params']:
+            if input_params['timeout']:
+                depending_on_timeout = int(input_params['timeout']/3)
+                self.api_params['early_stopping_iterations'] = \
+                    depending_on_timeout if depending_on_timeout > 5 else 5
 
         specified_seed = input_params['seed']
         if specified_seed is not None:
@@ -123,7 +135,8 @@ class ApiParams:
                   'with_tuning': True,
                   'preset': AUTO_PRESET_NAME,
                   'genetic_scheme': None,
-                  'early_stopping_generations': 30,
+                  'early_stopping_iterations': 30,
+                  'early_stopping_timeout': 10,
                   'use_pipelines_cache': True,
                   'use_preprocessing_cache': True,
                   'cache_folder': None}

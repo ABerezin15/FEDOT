@@ -1,3 +1,4 @@
+import itertools
 import os
 from functools import partial
 from itertools import chain
@@ -11,7 +12,8 @@ from fedot.core.dag.graph import Graph
 from fedot.core.dag.verification_rules import DEFAULT_DAG_RULES
 from fedot.core.data.data import InputData
 from fedot.core.operations.model import Model
-from fedot.core.optimisers.adapters import PipelineAdapter
+from fedot.core.optimisers.graph import OptNode, OptGraph
+from fedot.core.pipelines.adapters import PipelineAdapter
 from fedot.core.optimisers.fitness import SingleObjFitness
 from fedot.core.optimisers.gp_comp.evaluation import MultiprocessingDispatcher
 from fedot.core.optimisers.gp_comp.gp_params import GPGraphOptimizerParameters
@@ -20,10 +22,10 @@ from fedot.core.optimisers.gp_comp.operators.mutation import MutationTypesEnum, 
 from fedot.core.optimisers.gp_comp.pipeline_composer_requirements import PipelineComposerRequirements
 from fedot.core.optimisers.objective import PipelineObjectiveEvaluate
 from fedot.core.optimisers.objective.data_source_splitter import DataSourceSplitter
-from fedot.core.optimisers.objective.objective import Objective
+from fedot.core.optimisers.objective.metrics_objective import MetricsObjective
 from fedot.core.optimisers.opt_history_objects.individual import Individual
-from fedot.core.optimisers.opt_history_objects.parent_operator import ParentOperator
 from fedot.core.optimisers.opt_history_objects.opt_history import OptHistory
+from fedot.core.optimisers.opt_history_objects.parent_operator import ParentOperator
 from fedot.core.pipelines.node import PrimaryNode, SecondaryNode
 from fedot.core.pipelines.pipeline import Pipeline
 from fedot.core.pipelines.pipeline_graph_generation_params import get_pipeline_generation_params
@@ -128,8 +130,8 @@ def test_ancestor_for_crossover():
     parent_ind_first = Individual(adapter.adapt(Pipeline(PrimaryNode('linear'))))
     parent_ind_second = Individual(adapter.adapt(Pipeline(PrimaryNode('ridge'))))
 
-    graph_params = get_pipeline_generation_params(rules_for_constraint=DEFAULT_DAG_RULES)
     composer_requirements = PipelineComposerRequirements(max_depth=3)
+    graph_params = get_pipeline_generation_params(composer_requirements)
     opt_parameters = GPGraphOptimizerParameters(crossover_types=[CrossoverTypesEnum.subtree], crossover_prob=1)
     crossover = Crossover(opt_parameters, composer_requirements, graph_params)
     crossover_results = crossover([parent_ind_first, parent_ind_second])
@@ -152,14 +154,18 @@ def test_newly_generated_history(n_jobs: int):
                        timeout=None,
                        num_of_generations=num_of_gens, pop_size=3,
                        preset='fast_train',
-                       n_jobs=n_jobs)
+                       n_jobs=n_jobs,
+                       with_tuning=False)
     auto_model.fit(features=file_path_train, target='Y')
 
     history = auto_model.history
 
     assert history is not None
-    assert len(history.individuals) == num_of_gens + 1  # num_of_gens + initial assumption
-    assert len(history.archive_history) == num_of_gens + 1  # num_of_gens + initial assumption
+    assert len(history.individuals) == num_of_gens + 2  # initial_assumptions + num_of_gens + final_choices
+    assert len(history.archive_history) == num_of_gens + 2  # initial_assumptions + num_of_gens + final_choices
+    assert len(history.initial_assumptions) == 1
+    assert len(history.final_choices) == 1
+    assert isinstance(history.tuning_result, Graph)
     _test_individuals_in_history(history)
     # Test history dumps
     dumped_history_json = history.save()
@@ -193,7 +199,7 @@ def test_collect_intermediate_metric(pipeline: Pipeline, input_data: InputData, 
     metrics = [metric]
 
     data_source = DataSourceSplitter().build(input_data)
-    objective_eval = PipelineObjectiveEvaluate(Objective(metrics), data_source)
+    objective_eval = PipelineObjectiveEvaluate(MetricsObjective(metrics), data_source)
     dispatcher = MultiprocessingDispatcher(graph_gen_params.adapter)
     dispatcher.set_evaluation_callback(objective_eval.evaluate_intermediate_metrics)
     evaluate = dispatcher.dispatch(objective_eval)
@@ -254,3 +260,27 @@ def test_history_correct_serialization():
     assert history.individuals == reloaded_history.individuals
     assert dumped_history_json == reloaded_history.save(), 'The history is not equal to itself after reloading!'
     _test_individuals_in_history(reloaded_history)
+
+
+def test_history_save_custom_nodedata():
+    contents = [{'name': f'custom_{i}',
+                 'important_field': ['secret', 42],
+                 'matrix': np.random.randint(0, 100, (4 + 2 * i, 2 + i)).tolist()}
+                for i in range(10)]
+
+    graphs = [Individual(OptGraph(OptNode(content=content)), native_generation=i)
+              for i, content in enumerate(contents)]
+
+    history = OptHistory()
+    history.add_to_history(graphs[:3])
+    history.add_to_history(graphs[3:6])
+    history.add_to_history(graphs[6:])
+
+    saved = history.save()
+    reloaded = OptHistory.load(saved)
+    reloaded_inds = list(itertools.chain(*reloaded.individuals))
+
+    for i, ind in enumerate(reloaded_inds):
+        ind_content = ind.graph.root_node.content
+        assert ind_content == contents[i]
+        assert ind_content['matrix'] == contents[i]['matrix']

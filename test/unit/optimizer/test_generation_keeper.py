@@ -5,6 +5,7 @@ from fedot.core.optimisers.fitness import Fitness, MultiObjFitness, null_fitness
 from fedot.core.optimisers.gp_comp.operators.operator import PopulationT
 from fedot.core.optimisers.graph import OptGraph, OptNode
 from fedot.core.optimisers.objective.objective import Objective
+from fedot.core.optimisers.objective.metrics_objective import MetricsObjective
 from fedot.core.optimisers.opt_history_objects.individual import Individual
 from fedot.core.repository.quality_metrics_repository import ComplexityMetricsEnum, RegressionMetricsEnum
 
@@ -23,7 +24,7 @@ def create_population(fitness: Sequence[Fitness]) -> PopulationT:
 
 def generation_keeper(init_population=None, multi_objective=True):
     metrics = (RegressionMetricsEnum.RMSE, ComplexityMetricsEnum.structural)
-    objective = Objective(metrics, multi_objective)
+    objective = MetricsObjective(metrics, multi_objective)
     return GenerationKeeper(objective, initial_generation=init_population)
 
 
@@ -43,13 +44,13 @@ def population2():
 
 def test_archive_no_improvement():
     archive = generation_keeper(population1())
-    assert archive.stagnation_duration == 0
+    assert archive.stagnation_iter_count == 0
     assert archive.is_any_improved
     assert archive.is_quality_improved and archive.is_complexity_improved
     assert archive.generation_num == 1
 
     archive.append(population1())
-    assert archive.stagnation_duration == 1
+    assert archive.stagnation_iter_count == 1
     assert not archive.is_any_improved
     assert not archive.is_quality_improved and not archive.is_complexity_improved
     assert archive.generation_num == 2
@@ -64,7 +65,7 @@ def test_archive_multiobj_one_improvement():
                for new_ind in population2())
     archive.append(population2())
 
-    assert archive.stagnation_duration == 0
+    assert archive.stagnation_iter_count == 0
     assert archive.is_any_improved
     assert archive.generation_num == 2
     # plus one non-dominated individual

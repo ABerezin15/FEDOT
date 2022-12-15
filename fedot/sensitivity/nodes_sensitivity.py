@@ -1,11 +1,11 @@
 import json
 from os.path import join
-from typing import List, Optional, Type
+from typing import List, Optional, Type, Sequence
 
 import numpy as np
 from matplotlib import pyplot as plt
 
-from fedot.core.dag.graph_utils import get_nodes_degrees
+from fedot.core.dag.convert import graph_structure_as_nx_graph
 from fedot.core.data.data import InputData
 from fedot.core.log import default_log
 from fedot.core.pipelines.node import Node
@@ -74,7 +74,7 @@ class NodesAnalysis:
             nodes_results[f'id = {self.pipeline.nodes.index(node)}, ' \
                           f'operation = {node.content["name"].operation_type}'] = node_result
 
-        if self.requirements.is_visualize:
+        if self.requirements.visualization:
             self._visualize_result_per_approach(nodes_results, operation_types)
 
         if len(self.nodes_to_analyze) == len(self.pipeline.nodes):
@@ -130,3 +130,16 @@ class NodesAnalysis:
             gathered_results.append(approach_result)
 
         return gathered_results
+
+
+def get_nodes_degrees(graph: 'Graph') -> Sequence[int]:
+    """Nodes degree as the number of edges the node has:
+        ``degree = #input_edges + #out_edges``
+
+    Returns:
+        nodes degrees ordered according to the nx_graph representation of this graph
+    """
+    graph, _ = graph_structure_as_nx_graph(graph)
+    index_degree_pairs = graph.degree
+    node_degrees = [node_degree[1] for node_degree in index_degree_pairs]
+    return node_degrees

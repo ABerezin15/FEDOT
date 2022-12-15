@@ -1,33 +1,8 @@
-from typing import List, Any
+from typing import List
 
+from fedot.core.optimisers.advisor import DefaultChangeAdvisor, RemoveType
 from fedot.core.optimisers.graph import OptNode
 from fedot.core.repository.operation_types_repository import get_operations_for_task
-from fedot.core.utilities.data_structures import ComparableEnum as Enum
-
-
-class RemoveType(Enum):
-    node_only = 'node_only'
-    with_direct_children = 'with_direct_children'
-    with_parents = 'with_parents'
-    forbidden = 'forbidden'
-
-
-class DefaultChangeAdvisor:
-    """
-    Class for advising of pipeline changes during evolution
-    """
-
-    def __init__(self, task=None):
-        self.task = task
-
-    def propose_change(self, node: OptNode, possible_operations: List[Any]) -> List[Any]:
-        return possible_operations
-
-    def can_be_removed(self, node: OptNode) -> RemoveType:
-        return RemoveType.node_only
-
-    def propose_parent(self, node: OptNode, possible_operations: List[Any]) -> List[Any]:
-        return possible_operations
 
 
 class PipelineChangeAdvisor(DefaultChangeAdvisor):
@@ -38,7 +13,7 @@ class PipelineChangeAdvisor(DefaultChangeAdvisor):
 
     def can_be_removed(self, node: OptNode) -> RemoveType:
         operation_id = node.content['name']
-        if 'exog_ts' == operation_id:
+        if 'exog_ts' in operation_id:
             return RemoveType.forbidden
         if 'custom' in operation_id or 'lagged' in operation_id:
             return RemoveType.with_parents
@@ -54,11 +29,9 @@ class PipelineChangeAdvisor(DefaultChangeAdvisor):
         :return: list of candidates with str operations
         """
         operation_id = node.content['name']
-        if ('data_source' in operation_id or
-                'exog_ts' == operation_id or
-                'custom' in operation_id):
-            # data source replacement is useless
-            return [operation_id]
+        # data source, exog_ts and custom models replacement is useless
+        if check_for_specific_operations(operation_id):
+            return []
 
         is_model = operation_id in self.models
         similar_operations = self.models if is_model else self.data_operations
@@ -72,7 +45,7 @@ class PipelineChangeAdvisor(DefaultChangeAdvisor):
         if operation_id in candidates:
             # the change to the same node is not meaningful
             candidates.remove(operation_id)
-        return list(candidates)
+        return candidates
 
     def propose_parent(self, node: OptNode, possible_operations: List[str]) -> List[str]:
         """
@@ -83,14 +56,28 @@ class PipelineChangeAdvisor(DefaultChangeAdvisor):
         """
 
         operation_id = node.content['name']
-        parent_operations = [str(n.content['name']) for n in node.nodes_from]
+        if check_for_specific_operations(operation_id):
+            # data source, exog_ts and custom models moving is useless
+            return []
 
+        parent_operations = [str(n.content['name']) for n in node.nodes_from]
         candidates = set.intersection(set(self.data_operations), set(possible_operations))
+
         if operation_id in candidates:
             candidates.remove(operation_id)
         if parent_operations:
             for parent_operation_id in parent_operations:
+                if check_for_specific_operations(parent_operation_id):
+                    # data source, exog_ts and custom models moving is useless
+                    return []
                 if parent_operation_id in candidates:
                     # the sequence of the same parent and child is not meaningful
                     candidates.remove(parent_operation_id)
-        return list(candidates)
+        return candidates
+
+
+def check_for_specific_operations(operation_id: str):
+    if ('data_source' in operation_id or
+            'exog_ts' == operation_id or 'custom' in operation_id):
+        return True
+    return False

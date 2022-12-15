@@ -2,14 +2,16 @@ import json
 import os
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Any, List, Optional, Dict, Union
+from typing import Any, Dict, List, Optional
+
+import numpy as np
 
 from fedot.core.constants import BEST_QUALITY_PRESET_NAME, AUTO_PRESET_NAME
 from fedot.core.log import default_log
-from fedot.core.optimisers.graph import OptNode
 from fedot.core.repository.dataset_types import DataTypesEnum
 from fedot.core.repository.json_evaluation import eval_field_str, eval_strategy_str, read_field
 from fedot.core.repository.tasks import Task, TaskTypesEnum
+from fedot.core.utilities.data_structures import ensure_wrapped_in_sequence
 
 AVAILABLE_REPO_NAMES = ['all', 'model', 'data_operation', 'automl']
 
@@ -79,6 +81,7 @@ class OperationTypesRepository:
         self._tags_excluded_by_default = ['non-default', 'expensive']
         OperationTypesRepository.init_default_repositories()
 
+        self.operation_type = operation_type
         self.repository_name = []
         self._repo = []
         self.default_tags = []
@@ -107,7 +110,6 @@ class OperationTypesRepository:
         return operation_types
 
     @classmethod
-    @run_once
     def init_automl_repository(cls):
         default_automl_repo_file = cls.__repository_dict__['automl']['file']
         return cls.assign_repo('automl', default_automl_repo_file)
@@ -141,11 +143,16 @@ class OperationTypesRepository:
 
     def __exit__(self, type, value, traceback):
         self.repo_path = None
+        OperationTypesRepository.__repository_dict__[self.operation_type]['initialized_repo'] = None
         default_model_repo_file = OperationTypesRepository.__repository_dict__['model']['file']
         OperationTypesRepository.assign_repo('model', default_model_repo_file)
 
     def __repr__(self):
         return f"{self.__class__.__name__} for {self.repository_name}"
+
+    @property
+    def is_initialized(self):
+        return OperationTypesRepository.__repository_dict__[self.operation_type]['initialized_repo'] is None
 
     @classmethod
     def _initialise_repo(cls, repo_path: str) -> List[OperationMetaInfo]:
@@ -292,9 +299,16 @@ class OperationTypesRepository:
             if is_desired_task and tags_good and tags_bad and is_desired_preset:
                 operations_info.append(o)
 
-        # TODO: too many operations are filtered out, because only a small number of operations defines `input_types`
         if data_type:
-            operations_info = [o for o in operations_info if data_type in o.input_types]
+            # ignore text and image data types: there are no operations with these `input_type`
+            ignore_data_type = data_type in [DataTypesEnum.text, DataTypesEnum.image]
+            if data_type == DataTypesEnum.ts:
+                valid_data_types = [DataTypesEnum.ts, DataTypesEnum.table]
+            else:
+                valid_data_types = ensure_wrapped_in_sequence(data_type)
+            if not ignore_data_type:
+                operations_info = [o for o in operations_info if
+                                   np.any([data_type in o.input_types for data_type in valid_data_types])]
 
         return [m.id for m in operations_info]
 
@@ -325,38 +339,22 @@ class OperationTypesRepository:
         return None
 
 
-def get_opt_node_tag(opt_node: Union[OptNode, str], tags_model: Optional[List[str]] = None,
-                     tags_data: Optional[List[str]] = None,
-                     repos_tags: Optional[Dict['OperationTypesRepository', List[str]]] = None) -> Optional[str]:
-    """Finds the first suitable tag for the OptNode across Fedot repositories
-
-    Args:
-        opt_node: :obj:`OptNode` or its name
-        tags_model: tags for :obj:`OperationTypesRepository('model')` to map the history operations
-            The later the tag, the higher its priority in case of intersection
-        tags_data: tags for :obj:`OperationTypesRepository('data_operation')` to map the history operations
-            The later the tag, the higher its priority in case of intersection
-        repos_tags: dictionary mapping :obj:`OperationTypesRepository` with suitable tags.
-            Can be used only if no ``tags_model`` and ``tags_data`` specified.
-    Returns:
-        Optional[str]: first suitable tag or ``None``
+def get_visualization_tags_map() -> Dict[str, List[str]]:
     """
-
-    if (tags_model or tags_data) and repos_tags:
-        raise ValueError('Parameter repos_tags can not be set with any of these parameters: tags_model, tags_data.')
-
-    node_name = str(opt_node) if isinstance(opt_node, OptNode) else opt_node
-
-    repos_tags = repos_tags or {
-        OperationTypesRepository('model'): tags_model,
-        OperationTypesRepository('data_operation'): tags_data
-    }
-
-    for repo, tags in repos_tags.items():
-        tag = repo.get_first_suitable_operation_tag(node_name, tags)
-        if tag is not None:
-            return tag
-    return None
+    Returns map between repository tags and list of corresponding models for visualizations.
+    """
+    # Search for tags.
+    operations_map = {}
+    for repo_name in ('model', 'data_operation'):
+        repo = OperationTypesRepository(repo_name)
+        for operation in repo.operations:
+            tag = repo.get_first_suitable_operation_tag(operation.id, repo.default_tags)
+            operations_map[tag] = (operations_map.get(tag) or []) + [operation.id]
+    # Sort tags.
+    tags_model = OperationTypesRepository.DEFAULT_MODEL_TAGS
+    tags_data = OperationTypesRepository.DEFAULT_DATA_OPERATION_TAGS
+    operations_map = {tag: operations_map[tag] for tag in tags_model + tags_data if tag in operations_map}
+    return operations_map
 
 
 def _is_operation_contains_tag(candidate_tags: List[str],
@@ -401,12 +399,13 @@ def atomized_model_meta_tags():
     return ['random'], ['any'], ['atomized']
 
 
-def get_operations_for_task(task: Optional[Task], mode='all', tags=None, forbidden_tags=None,
-                            preset: str = None):
+def get_operations_for_task(task: Optional[Task], data_type: Optional[DataTypesEnum] = None, mode='all', tags=None,
+                            forbidden_tags=None, preset: str = None):
     """Function returns aliases of operations.
 
     Args:
         task: task to solve
+        data_type: type of input data
         mode: mode to return operations
 
             .. details:: the possible parameters of ``mode``:
@@ -431,7 +430,7 @@ def get_operations_for_task(task: Optional[Task], mode='all', tags=None, forbidd
     task_type = task.task_type if task else None
     if mode in AVAILABLE_REPO_NAMES:
         repo = OperationTypesRepository(mode)
-        model_types = repo.suitable_operation(task_type, tags=tags, forbidden_tags=forbidden_tags,
+        model_types = repo.suitable_operation(task_type, data_type=data_type, tags=tags, forbidden_tags=forbidden_tags,
                                               preset=preset)
         return model_types
     else:

@@ -19,6 +19,7 @@ from fedot.core.optimisers.gp_comp.operators.selection import SelectionTypesEnum
 from fedot.core.optimisers.gp_comp.pipeline_composer_requirements import PipelineComposerRequirements
 from fedot.core.optimisers.objective import Objective, PipelineObjectiveEvaluate
 from fedot.core.optimisers.objective.data_source_splitter import DataSourceSplitter
+from fedot.core.optimisers.objective.metrics_objective import MetricsObjective
 from fedot.core.pipelines.node import PrimaryNode, SecondaryNode
 from fedot.core.pipelines.pipeline import Pipeline
 from fedot.core.pipelines.pipeline_graph_generation_params import get_pipeline_generation_params
@@ -69,13 +70,14 @@ def test_random_composer(data_fixture, request):
     dataset_to_compose = data
     dataset_to_validate = data
 
-    available_model_types = OperationTypesRepository().suitable_operation(
-        task_type=TaskTypesEnum.classification)
+    available_model_types = OperationTypesRepository().suitable_operation(task_type=TaskTypesEnum.classification)
+    req = PipelineComposerRequirements(num_of_generations=3,
+                                       primary=available_model_types,
+                                       secondary=available_model_types)
+    objective = MetricsObjective(ClassificationMetricsEnum.ROCAUC)
 
-    objective = Objective(ClassificationMetricsEnum.ROCAUC)
-    req = PipelineComposerRequirements(primary=available_model_types, secondary=available_model_types)
-    optimiser = RandomSearchOptimizer(objective, RandomGraphFactory(req.primary, req.secondary), iter_num=2)
-    random_composer = RandomSearchComposer(optimiser, composer_requirements=req)
+    optimiser = RandomSearchOptimizer(objective, req)
+    random_composer = RandomSearchComposer(optimiser)
 
     pipeline_random_composed = random_composer.compose_pipeline(data=dataset_to_compose)
     pipeline_random_composed.fit_from_scratch(input_data=dataset_to_compose)
@@ -168,8 +170,11 @@ def test_composition_time(data_fixture, request):
 
     _ = gp_composer_completed_evolution.compose_pipeline(data=data)
 
-    assert len(gp_composer_terminated_evolution.history.individuals) == 1  # only the initial randomized population
-    assert len(gp_composer_completed_evolution.history.individuals) == 3
+    terminated_history = gp_composer_terminated_evolution.history
+    complete_history = gp_composer_completed_evolution.history
+
+    assert len(terminated_history.individuals) == 2  # initial randomized population & final choice
+    assert len(complete_history.individuals) == 4
 
 
 @pytest.mark.parametrize('data_fixture', ['file_data_setup'])
@@ -249,16 +254,18 @@ def dummy_quality_metric(*args, **kwargs):
 def test_gp_composer_with_adaptive_depth(data_fixture, request):
     data = request.getfixturevalue(data_fixture)
     dataset_to_compose = data
-    available_model_types = ['rf', 'knn']
+    available_secondary_model_types = ['rf', 'knn', 'logit', 'dt']
+    available_primary_model_types = available_secondary_model_types + ['scaling', 'resample']
 
     quality_metric = dummy_quality_metric
     max_depth = 5
     num_gen = 3
-    req = PipelineComposerRequirements(primary=available_model_types, secondary=available_model_types,
+    req = PipelineComposerRequirements(primary=available_primary_model_types, secondary=available_secondary_model_types,
                                        start_depth=2, max_depth=max_depth, num_of_generations=num_gen)
     params = GPGraphOptimizerParameters(adaptive_depth=True,
                                         adaptive_depth_max_stagnation=num_gen - 1,
-                                        genetic_scheme_type=GeneticSchemeTypesEnum.steady_state)
+                                        genetic_scheme_type=GeneticSchemeTypesEnum.steady_state,
+                                        pop_size=10)
     composer = ComposerBuilder(task=Task(TaskTypesEnum.classification)) \
         .with_requirements(req) \
         .with_optimizer_params(params) \
@@ -279,7 +286,7 @@ def test_evaluation_saving_info_from_process(data_fixture, request):
     quality_metric = ClassificationMetricsEnum.ROCAUC
 
     data_source = DataSourceSplitter().build(data)
-    objective_evaluator = PipelineObjectiveEvaluate(Objective(quality_metric), data_source,
+    objective_evaluator = PipelineObjectiveEvaluate(MetricsObjective(quality_metric), data_source,
                                                     pipelines_cache=OperationsCache())
 
     objective_evaluator(pipeline_first())
@@ -349,7 +356,7 @@ def test_gp_composer_early_stopping():
     time_limit = datetime.timedelta(minutes=10)
     start = datetime.datetime.now()
     model = Fedot(problem='classification', timeout=1000,
-                  early_stopping_generations=1,
+                  early_stopping_iterations=1,
                   pop_size=2,
                   with_tuning=False,
                   preset='fast_train')

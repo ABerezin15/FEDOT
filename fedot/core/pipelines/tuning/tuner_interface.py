@@ -38,7 +38,7 @@ class HyperoptTuner(ABC):
         self.init_metric = None
         self.obtained_metric = None
         self.objective_evaluate = objective_evaluate
-        self._default_metric_value = -MAX_METRIC_VALUE
+        self._default_metric_value = MAX_METRIC_VALUE
         self.search_space = search_space
         self.algo = algo
         self.n_jobs = n_jobs
@@ -68,6 +68,7 @@ class HyperoptTuner(ABC):
         Returns:
           value of loss function
         """
+        pipeline.unfit()
         pipeline_fitness = self.objective_evaluate.evaluate(pipeline)
         metric_value = pipeline_fitness.value
         if not pipeline_fitness.valid:
@@ -87,6 +88,8 @@ class HyperoptTuner(ABC):
         self.init_pipeline = deepcopy(pipeline)
 
         self.init_metric = self.get_metric_value(pipeline=self.init_pipeline)
+        self.log.message(f'Initial pipeline: {self.init_pipeline.structure} \n'
+                         f'Initial metric: {abs(self.init_metric):.3f}')
 
     def final_check(self, tuned_pipeline: Pipeline):
         """
@@ -111,13 +114,19 @@ class HyperoptTuner(ABC):
         init_metric = self.init_metric + deviation * np.sign(self.init_metric)
         if self.obtained_metric is None:
             self.log.info(f'{prefix_init_phrase} is None. Initial metric is {abs(init_metric):.3f}')
-            return self.init_pipeline
+            final_pipeline = self.init_pipeline
 
         elif self.obtained_metric <= init_metric:
             self.log.info(f'{prefix_tuned_phrase} {abs(self.obtained_metric):.3f} equal or '
                           f'better than initial (+ 5% deviation) {abs(init_metric):.3f}')
-            return tuned_pipeline
+            final_pipeline = tuned_pipeline
         else:
             self.log.info(f'{prefix_init_phrase} {abs(self.obtained_metric):.3f} '
                           f'worse than initial (+ 5% deviation) {abs(init_metric):.3f}')
-            return self.init_pipeline
+            final_pipeline = self.init_pipeline
+        self.log.message(f'Final pipeline: {final_pipeline.structure}')
+        if self.obtained_metric is not None:
+            self.log.message(f'Final metric: {abs(self.obtained_metric):.3f}')
+        else:
+            self.log.message(f'Final metric is None')
+        return final_pipeline

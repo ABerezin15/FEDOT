@@ -25,7 +25,7 @@ class BaseOptimizationAdapter(Generic[DomainStructureType]):
     def restore_func(self, fun: Callable) -> Callable:
         """Wraps native function so that it could accept domain graphs as arguments.
 
-        Behavior: `restore( f(OptGraph)->OptGraph ) => f'(DomainGraph)->DomainGraph`
+        Behavior: ``restore( f(OptGraph)->OptGraph ) => f'(DomainGraph)->DomainGraph``
 
         Implementation details.
         The method wraps callable into a function that transforms its args & return value.
@@ -45,7 +45,7 @@ class BaseOptimizationAdapter(Generic[DomainStructureType]):
         as arguments. If the function was registered as native, it is returned as-is.
         ``AdaptRegistry`` is responsible for function registration.
 
-        Behavior: `adapt( f(DomainGraph)->DomainGraph ) => f'(OptGraph)->OptGraph`
+        Behavior: ``adapt( f(DomainGraph)->DomainGraph ) => f'(OptGraph)->OptGraph``
 
         Implementation details.
         The method wraps callable into a function that transforms its args & return value.
@@ -148,9 +148,12 @@ class DirectAdapter(BaseOptimizationAdapter[DomainStructureType]):
 
 
 def _transform(fun: Callable, f_args: Callable, f_ret: Callable) -> Callable:
-    """Transforms input function in the following way:
+    """Wraps function by transforming its arguments and return value:
      ``f_args`` is called on each of the function arguments,
      ``f_ret`` is called on the return value of original function.
+
+     This is a helper function used for adaption of callables by
+     :py:class:`fedot.core.adapter.adapter.BaseOptimizationAdapter`.
 
     Args:
         fun: function to be transformed
@@ -174,7 +177,7 @@ def _transform(fun: Callable, f_args: Callable, f_ret: Callable) -> Callable:
             adapted_result = None
         elif isinstance(result, Tuple):
             # In case when function returns not only Graph
-            adapted_result = (f_ret(result_item) for result_item in result)
+            adapted_result = tuple(f_ret(result_item) for result_item in result)
         else:
             adapted_result = f_ret(result)
         return adapted_result

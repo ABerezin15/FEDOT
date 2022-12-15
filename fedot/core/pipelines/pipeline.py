@@ -1,11 +1,13 @@
 from copy import deepcopy
 from datetime import timedelta
+from os import PathLike
 from typing import List, Optional, Tuple, Union, Sequence
 
 import func_timeout
 
 from fedot.core.caching.pipelines_cache import OperationsCache
 from fedot.core.caching.preprocessing_cache import PreprocessingCache
+from fedot.core.dag.graph import Graph
 from fedot.core.dag.graph_delegate import GraphDelegate
 from fedot.core.dag.graph_node import GraphNode
 from fedot.core.dag.graph_utils import distance_to_primary_level
@@ -20,6 +22,9 @@ from fedot.core.pipelines.node import Node, PrimaryNode, SecondaryNode
 from fedot.core.pipelines.template import PipelineTemplate
 from fedot.core.repository.tasks import TaskTypesEnum
 from fedot.core.utilities.serializable import Serializable
+from fedot.core.utils import copy_doc
+from fedot.core.visualisation.graph_viz import NodeColorType
+from fedot.core.visualisation.pipeline_specific_visuals import PipelineVisualizer
 from fedot.preprocessing.preprocessing import DataPreprocessor, update_indices_for_time_series
 
 ERROR_PREFIX = 'Invalid pipeline configuration:'
@@ -137,7 +142,6 @@ class Pipeline(GraphDelegate, Serializable):
         copied_input_data = self.preprocessor.convert_indexes_for_fit(pipeline=self,
                                                                       data=copied_input_data)
         copied_input_data = self._assign_data_to_nodes(copied_input_data)
-
         if time_constraint is None:
             train_predicted = self._fit(input_data=copied_input_data)
         else:
@@ -238,13 +242,16 @@ class Pipeline(GraphDelegate, Serializable):
             result.predict = self.preprocessor.apply_inverse_target_encoding(result.predict)
         return result
 
-    def save(self, path: str = None, datetime_in_path: bool = True) -> Tuple[str, dict]:
+    def save(self, path: str = None, create_subdir: bool = True, is_datetime_in_path: bool = False) -> Tuple[str, dict]:
         """
         Saves the pipeline to JSON representation with pickled fitted operations
 
         Args:
-            path: custom path to save the JSON to
-            datetime_in_path: is it required to add the datetime timestamp to the path
+            path: custom path to dir where to save JSON or name of json file where to save pipeline.
+            If only file name is specified, than absolute path to this file will be created.
+            create_subdir: if True -- create one more dir in the last dir
+                           if False -- save to the last dir in specified path
+            is_datetime_in_path: is it required to add the datetime timestamp to the path
 
         Returns:
             Tuple[str, dict]: :obj:`JSON representation of the pipeline structure`,
@@ -253,7 +260,8 @@ class Pipeline(GraphDelegate, Serializable):
 
         template = PipelineTemplate(self)
         json_object, dict_fitted_operations = template.export_pipeline(path, root_node=self.root_node,
-                                                                       datetime_in_path=datetime_in_path)
+                                                                       create_subdir=create_subdir,
+                                                                       is_datetime_in_path=is_datetime_in_path)
         return json_object, dict_fitted_operations
 
     def load(self, source: Union[str, dict], dict_fitted_operations: Optional[dict] = None):
@@ -267,6 +275,7 @@ class Pipeline(GraphDelegate, Serializable):
         self.nodes = []
         template = PipelineTemplate(self)
         template.import_pipeline(source, dict_fitted_operations)
+        return self
 
     @property
     def root_node(self) -> Optional[Node]:
@@ -327,14 +336,22 @@ class Pipeline(GraphDelegate, Serializable):
             return None
         return input_data
 
+    @property
+    def structure(self) -> str:
+        """ Structural information about the pipeline
+
+            Returns:
+                string with pipeline structure
+        """
+        return '\n'.join([str(self), *(f'{node.operation.operation_type} - {node.parameters}' for node in self.nodes)])
+
     def print_structure(self):
-        """ Prints structural information about the pipeline
+        """ Prints structure of the pipeline
         """
 
         print(
             'Pipeline structure:',
-            self,
-            *(f'{node.operation.operation_type} - {node.parameters}' for node in self.nodes),
+            self.structure,
             sep='\n'
         )
 
@@ -353,22 +370,12 @@ class Pipeline(GraphDelegate, Serializable):
                         node.content['params']['num_threads'] = n_jobs
                         node.content['params']['n_jobs'] = n_jobs
 
-
-def nodes_with_operation(pipeline: Pipeline, operation_name: str) -> List[Node]:
-    """Returns list of nodes with the required ``operation_name``
-
-    Args:
-        pipeline: pipeline to process
-        operation_name: name of the operation to filter by
-
-    Returns:
-        list: relevant nodes (empty if there are no such nodes)
-    """
-
-    # Check if model has decompose operations
-    appropriate_nodes = filter(lambda x: x.operation.operation_type == operation_name, pipeline.nodes)
-
-    return list(appropriate_nodes)
+    @copy_doc(Graph)
+    def show(self, save_path: Optional[Union[PathLike, str]] = None, engine: Optional[str] = None,
+             node_color: Optional[NodeColorType] = None, dpi: Optional[int] = None,
+             node_size_scale: Optional[float] = None, font_size_scale: Optional[float] = None,
+             edge_curvature_scale: Optional[float] = None):
+        PipelineVisualizer(self).visualise(save_path, engine, node_color, dpi, node_size_scale, font_size_scale)
 
 
 def _graph_nodes_to_pipeline_nodes(operator: LinkedGraph, nodes: Sequence[Node]):

@@ -1,23 +1,20 @@
 from abc import abstractmethod
-from typing import TYPE_CHECKING, Any, Optional, Sequence
+from typing import Any, Dict, Optional, Sequence
 
+import datetime
 from tqdm import tqdm
 
 from fedot.core.dag.graph import Graph
 from fedot.core.optimisers.archive import GenerationKeeper
 from fedot.core.optimisers.gp_comp.evaluation import MultiprocessingDispatcher
-from fedot.core.optimisers.gp_comp.operators.operator import PopulationT
+from fedot.core.optimisers.gp_comp.operators.operator import EvaluationOperator, PopulationT
 from fedot.core.optimisers.gp_comp.pipeline_composer_requirements import PipelineComposerRequirements
 from fedot.core.optimisers.graph import OptGraph
 from fedot.core.optimisers.objective import GraphFunction, ObjectiveFunction
 from fedot.core.optimisers.objective.objective import Objective
 from fedot.core.optimisers.optimizer import GraphGenerationParams, GraphOptimizer, GraphOptimizerParameters
 from fedot.core.optimisers.timer import OptimisationTimer
-from fedot.core.pipelines.pipeline import Pipeline
 from fedot.core.utilities.grouped_condition import GroupedCondition
-
-if TYPE_CHECKING:
-    pass
 
 
 class PopulationalOptimizer(GraphOptimizer):
@@ -26,14 +23,14 @@ class PopulationalOptimizer(GraphOptimizer):
     PopulationalOptimizer implements all basic methods for optimization not related to evolution process
     to experiment with other kinds of evolution optimization methods
     It allows to find the optimal solution using specified metric (one or several).
-    To implement the specific evolution strategy,
-    the abstract method '_evolution_process' should be re-defined in the ancestor class
+    To implement the specific evolution strategy, implement `_evolution_process`.
 
-    :param objective: objective for optimization
-    :param initial_graphs: graphs which were initialized outside the optimizer
-    :param requirements: implementation-independent requirements for graph optimizer
-    :param graph_generation_params: parameters for new graph generation
-    :param graph_optimizer_params: parameters for specific implementation of graph optimizer
+    Args:
+         objective: objective for optimization
+         initial_graphs: graphs which were initialized outside the optimizer
+         requirements: implementation-independent requirements for graph optimizer
+         graph_generation_params: parameters for new graph generation
+         graph_optimizer_params: parameters for specific implementation of graph optimizer
     """
 
     def __init__(self,
@@ -52,19 +49,23 @@ class PopulationalOptimizer(GraphOptimizer):
                                                          graph_cleanup_fn=_unfit_pipeline,
                                                          delegate_evaluator=graph_generation_params.remote_evaluator)
 
-        # early_stopping_generations may be None, so use some obvious max number
-        max_stagnation_length = requirements.early_stopping_generations or requirements.num_of_generations
+        # early_stopping_iterations and early_stopping_timeout may be None, so use some obvious max number
+        max_stagnation_length = requirements.early_stopping_iterations or requirements.num_of_generations
+        max_stagnation_time = requirements.early_stopping_timeout or self.timer.timeout
         self.stop_optimization = \
             GroupedCondition(results_as_message=True).add_condition(
                 lambda: self.timer.is_time_limit_reached(self.current_generation_num),
                 'Optimisation stopped: Time limit is reached'
             ).add_condition(
-                lambda: requirements.num_of_generations is not None and
-                        self.current_generation_num >= requirements.num_of_generations + 1,
+                lambda: self.requirements.num_of_generations is not None and
+                        self.current_generation_num >= self.requirements.num_of_generations + 1,
                 'Optimisation stopped: Max number of generations reached'
             ).add_condition(
-                lambda: self.generations.stagnation_duration >= max_stagnation_length,
-                'Optimisation finished: Early stopping criteria was satisfied'
+                lambda: self.generations.stagnation_iter_count >= max_stagnation_length,
+                'Optimisation finished: Early stopping iterations criteria was satisfied'
+            ).add_condition(
+                lambda: self.generations.stagnation_time_duration >= max_stagnation_time,
+                'Optimisation finished: Early stopping timeout criteria was satisfied'
             )
 
     @property
@@ -82,52 +83,49 @@ class PopulationalOptimizer(GraphOptimizer):
 
         with self.timer, self._progressbar:
 
-            self._initial_population(evaluator=evaluator)
+            self._initial_population(evaluator)
 
             while not self.stop_optimization():
                 try:
-                    new_population = self._evolve_population(evaluator=evaluator)
+                    new_population = self._evolve_population(evaluator)
                 except EvaluationAttemptsError as ex:
                     self.log.warning(f'Composition process was stopped due to: {ex}')
-                    return self.best_graphs
+                    return [ind.graph for ind in self.best_individuals]
                 # Adding of new population to history
                 self._update_population(new_population)
-
-        return self.best_graphs
+        self._update_population(self.best_individuals, 'final_choices')
+        return [ind.graph for ind in self.best_individuals]
 
     @property
-    def best_graphs(self):
-        all_best_graphs = [ind.graph for ind in self.generations.best_individuals]
-        return all_best_graphs
+    def best_individuals(self):
+        return self.generations.best_individuals
 
     @abstractmethod
-    def _initial_population(self, *args, **kwargs):
+    def _initial_population(self, evaluator: EvaluationOperator):
         """ Initializes the initial population """
         raise NotImplementedError()
 
     @abstractmethod
-    def _evolve_population(self, *args, **kwargs) -> PopulationT:
+    def _evolve_population(self, evaluator: EvaluationOperator) -> PopulationT:
         """ Method realizing full evolution cycle """
         raise NotImplementedError()
 
-    def _update_population(self, next_population: PopulationT):
-        self._update_native_generation_numbers(next_population)
+    def _update_population(self, next_population: PopulationT, label: Optional[str] = None,
+                           metadata: Optional[Dict[str, Any]] = None):
         self.generations.append(next_population)
         self._optimisation_callback(next_population, self.generations)
-        self._log_to_history(next_population)
+        self._log_to_history(next_population, label, metadata)
         self.population = next_population
 
         self.log.info(f'Generation num: {self.current_generation_num}')
         self.log.info(f'Best individuals: {str(self.generations)}')
-        self.log.info(f'no improvements for {self.generations.stagnation_duration} iterations')
-        self.log.info(f'spent time: {round(self.timer.minutes_from_start, 1)} min')
+        if self.generations.stagnation_iter_count > 0:
+            self.log.info(f'no improvements for {self.generations.stagnation_iter_count} iterations')
+            self.log.info(f'spent time: {round(self.timer.minutes_from_start, 1)} min')
 
-    def _update_native_generation_numbers(self, population: PopulationT):
-        for individual in population:
-            individual.set_native_generation(self.current_generation_num)
-
-    def _log_to_history(self, population: PopulationT):
-        self.history.add_to_history(population)
+    def _log_to_history(self, population: PopulationT, label: Optional[str] = None,
+                        metadata: Optional[Dict[str, Any]] = None):
+        self.history.add_to_history(population, label, metadata)
         self.history.add_to_archive_history(self.generations.best_individuals)
         if self.requirements.history_dir:
             self.history.save_current_results()
@@ -144,8 +142,9 @@ class PopulationalOptimizer(GraphOptimizer):
         return bar
 
 
+# TODO: remove this hack (e.g. provide smth like FitGraph with fit/unfit interface)
 def _unfit_pipeline(graph: Any):
-    if isinstance(graph, Pipeline):
+    if hasattr(graph, 'unfit'):
         graph.unfit()
 
 
@@ -161,13 +160,7 @@ class EvaluationAttemptsError(Exception):
     """ Number of evaluation attempts exceeded """
 
     def __init__(self, *args):
-        if args:
-            self.message = args[0]
-        else:
-            self.message = None
+        self.message = args[0] or None
 
     def __str__(self):
-        if self.message:
-            return self.message
-        else:
-            return 'Too many fitness evaluation errors.'
+        return self.message or 'Too many fitness evaluation errors.'

@@ -8,7 +8,7 @@ HERE = Path(__file__).parent.resolve()
 
 # The text of the README file
 NAME = 'fedot'
-VERSION = '0.6.0'
+VERSION = '0.6.1'
 AUTHOR = 'NSS Lab'
 SHORT_DESCRIPTION = 'Automated machine learning framework for composite pipelines'
 README = Path(HERE, 'README.rst').read_text(encoding='utf-8')
@@ -51,7 +51,7 @@ setuptools.setup(
         for key in ('docs', 'examples', 'extra', 'profilers')
     },
     classifiers=[
-        'License :: OSI Approved :: MIT License',
+        'License :: OSI Approved :: BSD License',
         'Programming Language :: Python :: 3.7',
         'Programming Language :: Python :: 3.8',
         'Programming Language :: Python :: 3.9'
