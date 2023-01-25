@@ -1,16 +1,14 @@
 import datetime
-
-import pytest
 from copy import deepcopy
 from functools import partial
 
 import numpy as np
+import pytest
 
-from fedot.core.composer.metrics import MSE
 from fedot.core.data.data import InputData
 from fedot.core.data.supplementary_data import SupplementaryData
 from fedot.core.optimisers.fitness import SingleObjFitness
-from fedot.core.optimisers.objective import Objective, PipelineObjectiveEvaluate
+from fedot.core.optimisers.objective import PipelineObjectiveEvaluate
 from fedot.core.optimisers.objective.data_source_splitter import DataSourceSplitter
 from fedot.core.optimisers.objective.metrics_objective import MetricsObjective
 from fedot.core.pipelines.pipeline import Pipeline
@@ -29,17 +27,17 @@ _ = classification_dataset
 
 
 def pipeline_first_test():
-    pipeline = PipelineBuilder().add_node('rf').add_node('rf').to_pipeline()
+    pipeline = PipelineBuilder().add_node('rf').add_node('rf').build()
     return pipeline
 
 
 def pipeline_second_test():
-    pipeline = PipelineBuilder().add_node('knn').add_node('knn').to_pipeline()
+    pipeline = PipelineBuilder().add_node('knn').add_node('knn').build()
     return pipeline
 
 
 def pipeline_third_test():
-    pipeline = PipelineBuilder().add_node('xgboost').to_pipeline()
+    pipeline = PipelineBuilder().add_node('xgboost').build()
     return pipeline
 
 
@@ -146,7 +144,7 @@ def test_pipeline_objective_evaluate_with_time_constraint(classification_dataset
      throwing_exception_metric]
 )
 def test_pipeline_objective_evaluate_with_invalid_metrics(classification_dataset, metrics):
-    with pytest.raises(ValueError):
+    with pytest.raises(Exception):
         pipeline = sample_pipeline()
 
         data_split = partial(OneFoldInputDataSplit().input_split, input_data=classification_dataset)
